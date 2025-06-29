@@ -132,6 +132,8 @@
     <ClCompile Include="Error.cpp" />
     <ClCompile Include="Eugen++.cpp" />
     <ClCompile Include="Lexer.cpp" />
+    <ClCompile Include="Nodes.cpp" />
+    <ClCompile Include="Parser.cpp" />
     <ClCompile Include="Position.cpp" />
     <ClCompile Include="Token.cpp" />
   </ItemGroup>
@@ -139,8 +141,13 @@
     <ClInclude Include="Error.hpp" />
     <ClInclude Include="Helper.hpp" />
     <ClInclude Include="Lexer.hpp" />
+    <ClInclude Include="Nodes.hpp" />
+    <ClInclude Include="Parser.hpp" />
     <ClInclude Include="Position.hpp" />
     <ClInclude Include="Token.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="grammar.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

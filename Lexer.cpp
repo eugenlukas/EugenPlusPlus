@@ -38,27 +38,27 @@ MakeTokensResult Lexer::MakeTokens()
 				Advance();
 				break;
 			case '+':
-				tokens.push_back(Token(TT_PLUS, ""));
+				tokens.push_back(Token(TT_PLUS, "", pos));
 				Advance();
 				break;
 			case '-':
-				tokens.push_back(Token(TT_MINUS, ""));
+				tokens.push_back(Token(TT_MINUS, "", pos));
 				Advance();
 				break;
 			case '*':
-				tokens.push_back(Token(TT_MUL, ""));
+				tokens.push_back(Token(TT_MUL, "", pos));
 				Advance();
 				break;
 			case '/':
-				tokens.push_back(Token(TT_DIV, ""));
+				tokens.push_back(Token(TT_DIV, "", pos));
 				Advance();
 				break;
 			case '(':
-				tokens.push_back(Token(TT_LPAREN, ""));
+				tokens.push_back(Token(TT_LPAREN, "", pos));
 				Advance();
 				break;
 			case ')':
-				tokens.push_back(Token(TT_RPAREN, ""));
+				tokens.push_back(Token(TT_RPAREN, "", pos));
 				Advance();
 				break;
 			default:
@@ -71,6 +71,7 @@ MakeTokensResult Lexer::MakeTokens()
 		}
 	}
 
+	tokens.push_back(Token(TT_EOF, "", pos));
 	return MakeTokensResult(tokens, nullptr);
 }
 
@@ -78,6 +79,7 @@ Token Lexer::makeNumber()
 {
 	std::string numStr = "";
 	int dotCount = 0;
+	Position posStart = pos.Copy();
 
 	while (current_char != '\0' && (std::isdigit(current_char) || current_char == '.'))
 	{
@@ -95,7 +97,7 @@ Token Lexer::makeNumber()
 	}
 	
 	if (dotCount == 0)
-		return Token(TT_INT, numStr);
+		return Token(TT_INT, numStr, posStart, pos);
 	else
-		return Token(TT_FLOAT, numStr);
+		return Token(TT_FLOAT, numStr, posStart, pos);
 }

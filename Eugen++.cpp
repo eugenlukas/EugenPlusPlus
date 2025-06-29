@@ -2,18 +2,33 @@
 #include "Lexer.hpp"
 #include "Helper.hpp"
 #include <string>
+#include "Parser.hpp"
 
 int main()
 {
-    std::string text;
-    std::cout << "basic > ";
-    std::getline(std::cin, text);
+    while (true)
+    {
+        std::string text;
+        std::cout << "basic > ";
+        std::getline(std::cin, text);
 
-    Lexer lexer("<stdin>", text);
-    MakeTokensResult result = lexer.MakeTokens();
+        // Generate tokens
+        Lexer lexer("<stdin>", text);
+        MakeTokensResult result = lexer.MakeTokens();
 
-    if (result.error != nullptr)
-        std::cout << result.error->AsString() << std::endl;
-    else
-        std::cout << Helper::TokenVectorToString(result.tokens) << std::endl;
+        if (result.error != nullptr)
+        {
+            std::cout << result.error->AsString() << std::endl;
+            continue;
+        }
+
+        // Generate AST
+        Parser parser(result.tokens);
+        ParseResult ast = parser.Parse();
+
+        if (ast.HasError())
+            std::cout << ast.GetError() << std::endl;
+        else
+            std::cout << ast.GetNode()->Repr() << std::endl;
+    }
 }
