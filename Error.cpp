@@ -12,7 +12,7 @@ Error::Error(const Position& pos_start, const Position& pos_end, const std::stri
 
 std::string Error::AsString()
 {
-	std::string result = "\nFile " + pos_start.GetFileName() + ", line " + std::to_string(pos_start.GetLineNumber() + 1);
+	std::string result = "File " + pos_start.GetFileName() + ", line " + std::to_string(pos_start.GetLineNumber() + 1);
 	result += "\n" + error_name + ": " + details;
 	result += "\n\n" + Helper::StringWithArrows(pos_start.GetFileContent(), pos_start, pos_end);
 	return result;

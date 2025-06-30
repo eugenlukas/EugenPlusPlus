@@ -60,11 +60,13 @@ public:
 
 	ParseResult Parse();
 
+	ParseResult Atom();
+	ParseResult Power();
 	ParseResult Factor();
 	ParseResult Term();
 	ParseResult Expr();
 
-	ParseResult BinOp(std::function<ParseResult()> func, std::vector<std::string> ops);
+	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b=nullptr);
 
 private:
 	std::vector<Token> tokens;

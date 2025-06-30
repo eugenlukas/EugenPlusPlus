@@ -54,6 +54,10 @@ MakeTokensResult Lexer::MakeTokens()
 				tokens.push_back(Token(TT_DIV, std::nullopt, pos));
 				Advance();
 				break;
+			case '^':
+				tokens.push_back(Token(TT_POW, std::nullopt, pos));
+				Advance();
+				break;
 			case '(':
 				tokens.push_back(Token(TT_LPAREN, std::nullopt, pos));
 				Advance();

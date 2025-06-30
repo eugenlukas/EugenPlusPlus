@@ -24,20 +24,12 @@ ParseResult Parser::Parse()
 	return res;
 }
 
-ParseResult Parser::Factor()
+ParseResult Parser::Atom()
 {
 	ParseResult res = ParseResult();
 	Token tok = currentToken;
 
-	if (tok.GetType() == TT_PLUS || tok.GetType() == TT_MINUS)
-	{
-		res.Register(Advance());
-		std::shared_ptr<Node> factor = res.Register(Factor());
-		if (res.HasError())
-			return res;
-		return res.Success(std::make_shared<UnaryOpNode>(tok, factor));
-	}
-	else if (tok.GetType() == TT_INT || tok.GetType() == TT_FLOAT)
+	if (tok.GetType() == TT_INT || tok.GetType() == TT_FLOAT)
 	{
 		res.Register(Advance());
 		return res.Success(std::make_shared<NumberNode>(tok));
@@ -57,7 +49,30 @@ ParseResult Parser::Factor()
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')'"));
 	}
 
-	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int or float"));
+	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, '+', '-' or ''("));
+}
+
+ParseResult Parser::Power()
+{
+	std::vector<std::string> ops = { TT_POW};
+	return BinOp([this]() {return Atom(); }, ops, [this]() {return Factor(); });
+}
+
+ParseResult Parser::Factor()
+{
+	ParseResult res = ParseResult();
+	Token tok = currentToken;
+
+	if (tok.GetType() == TT_PLUS || tok.GetType() == TT_MINUS)
+	{
+		res.Register(Advance());
+		std::shared_ptr<Node> factor = res.Register(Factor());
+		if (res.HasError())
+			return res;
+		return res.Success(std::make_shared<UnaryOpNode>(tok, factor));
+	}
+
+	return Power();
 }
 
 ParseResult Parser::Term()
@@ -72,10 +87,13 @@ ParseResult Parser::Expr()
 	return BinOp([this]() {return Term(); }, ops);
 }
 
-ParseResult Parser::BinOp(std::function<ParseResult()> func, std::vector<std::string> ops)
+ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b)
 {
+	if (func_b == nullptr)
+		func_b = func_a;
+
 	ParseResult res;
-	auto left = res.Register(func());
+	auto left = res.Register(func_a());
 
 	if (res.HasError())
 		return res;
@@ -84,7 +102,7 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func, std::vector<std::st
 	{
 		Token opToken = currentToken;
 		res.Register(Advance());
-		auto right = res.Register(func());
+		auto right = res.Register(func_b());
 		if (res.HasError())
 			return res;
 		left = std::make_shared<BinOpNode>(left, opToken, right);

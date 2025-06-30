@@ -10,6 +10,7 @@ constexpr char TT_PLUS[] = "PLUS";
 constexpr char TT_MINUS[] = "MINUS";
 constexpr char TT_MUL[] = "MUL";
 constexpr char TT_DIV[] = "DIV";
+constexpr char TT_POW[] = "POW";
 constexpr char TT_LPAREN[] = "LPAREN";
 constexpr char TT_RPAREN[] = "RPAREN";
 constexpr char TT_EOF[] = "EOF";

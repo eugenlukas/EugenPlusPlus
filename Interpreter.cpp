@@ -53,6 +53,8 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
             return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Division by zero"));
         return RTResult().Success(l / r);
     }
+    else if (node.GetOpToken().GetType() == TT_POW)
+        return RTResult().Success(pow(l, r));
 
     return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Unknown binary operator"));
 }
