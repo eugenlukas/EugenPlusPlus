@@ -1,4 +1,5 @@
 #include "Lexer.hpp"
+#include <string>
 
 Lexer::Lexer(const std::string& fn, const std::string& text)
 {
@@ -38,27 +39,27 @@ MakeTokensResult Lexer::MakeTokens()
 				Advance();
 				break;
 			case '+':
-				tokens.push_back(Token(TT_PLUS, "", pos));
+				tokens.push_back(Token(TT_PLUS, std::nullopt, pos));
 				Advance();
 				break;
 			case '-':
-				tokens.push_back(Token(TT_MINUS, "", pos));
+				tokens.push_back(Token(TT_MINUS, std::nullopt, pos));
 				Advance();
 				break;
 			case '*':
-				tokens.push_back(Token(TT_MUL, "", pos));
+				tokens.push_back(Token(TT_MUL, std::nullopt, pos));
 				Advance();
 				break;
 			case '/':
-				tokens.push_back(Token(TT_DIV, "", pos));
+				tokens.push_back(Token(TT_DIV, std::nullopt, pos));
 				Advance();
 				break;
 			case '(':
-				tokens.push_back(Token(TT_LPAREN, "", pos));
+				tokens.push_back(Token(TT_LPAREN, std::nullopt, pos));
 				Advance();
 				break;
 			case ')':
-				tokens.push_back(Token(TT_RPAREN, "", pos));
+				tokens.push_back(Token(TT_RPAREN, std::nullopt, pos));
 				Advance();
 				break;
 			default:
@@ -71,7 +72,7 @@ MakeTokensResult Lexer::MakeTokens()
 		}
 	}
 
-	tokens.push_back(Token(TT_EOF, "", pos));
+	tokens.push_back(Token(TT_EOF, std::nullopt, pos));
 	return MakeTokensResult(tokens, nullptr);
 }
 
@@ -97,7 +98,7 @@ Token Lexer::makeNumber()
 	}
 	
 	if (dotCount == 0)
-		return Token(TT_INT, numStr, posStart, pos);
+		return Token(TT_INT, std::stod(numStr), posStart, pos);
 	else
-		return Token(TT_FLOAT, numStr, posStart, pos);
+		return Token(TT_FLOAT, std::stod(numStr), posStart, pos);
 }

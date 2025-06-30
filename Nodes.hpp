@@ -15,6 +15,7 @@ public:
 	NumberNode(Token token);
 
 	std::string Repr() override;
+	Token GetToken() { return token; };
 
 private:
 	Token token;
@@ -26,6 +27,9 @@ public:
 	BinOpNode(std::shared_ptr<Node> leftNode, Token opToken, std::shared_ptr<Node> rightNode);
 
 	std::string Repr() override;
+	std::shared_ptr<Node> GetLeftNode() { return leftNode; };
+	Token GetOpToken() { return opToken; };
+	std::shared_ptr<Node> GetRightNode() { return rightNode; };
 
 private:
 	std::shared_ptr<Node> leftNode;
@@ -39,6 +43,8 @@ public:
 	UnaryOpNode(Token opToken, std::shared_ptr<Node> node);
 
 	std::string Repr() override;
+	Token GetOpToken() { return opToken; }
+	std::shared_ptr<Node> GetNode() { return node; }
 
 private:
 	Token opToken;

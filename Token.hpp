@@ -2,6 +2,7 @@
 #include <iostream>
 #include "Position.hpp"
 #include <optional>
+#include <variant>
 
 constexpr char TT_INT[] = "INT";
 constexpr char TT_FLOAT[] = "FLOAT";
@@ -18,7 +19,7 @@ class Token
 {
 public:
 	Token();
-	Token(const std::string& type_, const std::string& value="", std::optional<Position> posStart=std::nullopt, std::optional<Position> posEnd=std::nullopt);
+	Token(const std::string& type_, std::optional<std::variant<int, double>> value = std::nullopt, std::optional<Position> posStart=std::nullopt, std::optional<Position> posEnd=std::nullopt);
 
 	std::string Repr();
 
@@ -26,9 +27,11 @@ public:
 	Position GetPosStart() { return posStart.value(); }
 	Position GetPosEnd() { return posEnd.value(); }
 
+	std::variant<int, double> GetValue() const;
+
 private:
 	std::string type;
-	std::string value = "";
+	std::optional<std::variant<int, double>> value = std::nullopt;
 	std::optional<Position> posStart = std::nullopt;
 	std::optional<Position> posEnd = std::nullopt;
 };

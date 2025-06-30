@@ -3,6 +3,7 @@
 #include "Helper.hpp"
 #include <string>
 #include "Parser.hpp"
+#include "Interpreter.hpp"
 
 int main()
 {
@@ -14,21 +15,39 @@ int main()
 
         // Generate tokens
         Lexer lexer("<stdin>", text);
-        MakeTokensResult result = lexer.MakeTokens();
+        MakeTokensResult tokenResult = lexer.MakeTokens();
 
-        if (result.error != nullptr)
+        if (tokenResult.error != nullptr)
         {
-            std::cout << result.error->AsString() << std::endl;
+            std::cout << tokenResult.error->AsString() << std::endl;
             continue;
         }
 
         // Generate AST
-        Parser parser(result.tokens);
+        Parser parser(tokenResult.tokens);
         ParseResult ast = parser.Parse();
 
         if (ast.HasError())
+        {
             std::cout << ast.GetError() << std::endl;
-        else
-            std::cout << ast.GetNode()->Repr() << std::endl;
+            continue;
+        }
+            
+        //Print ast
+            //std::cout << ast.GetNode()->Repr() << std::endl;
+
+        Interpreter interpreter;
+        auto result = interpreter.Visit(ast.GetNode());
+
+        if (result.HasError())
+        {
+            std::cout << result.GetError() << std::endl;
+            continue;
+        }
+
+        if (result.GetValue().has_value())
+        {
+            std::cout << result.GetValue().value() << std::endl;
+        }
     }
 }

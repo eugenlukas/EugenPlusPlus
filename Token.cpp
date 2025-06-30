@@ -1,9 +1,10 @@
 #include "Token.hpp"
+#include <string>
 
 Token::Token()
 {}
 
-Token::Token(const std::string & type_, const std::string & value, std::optional<Position> posStart, std::optional<Position> posEnd)
+Token::Token(const std::string & type_, std::optional<std::variant<int, double>> value, std::optional<Position> posStart, std::optional<Position> posEnd)
 {
 	type = type_;
 	this->value = value;
@@ -21,8 +22,19 @@ Token::Token(const std::string & type_, const std::string & value, std::optional
 
 std::string Token::Repr()
 {
-	if (!value.empty())
-		return type + ":" + value;
-	else
-		return type;
+	if (value.has_value())
+	{
+		if (std::holds_alternative<int>(value.value()))
+			return "INT:" + std::to_string(std::get<int>(value.value()));
+		else
+			return "FLOAT:" + std::to_string(std::get<double>(value.value()));
+	}
+	return type;
+}
+
+std::variant<int, double> Token::GetValue() const
+{
+	if (value.has_value())
+		return value.value();
+	throw std::runtime_error("Token has no value");
 }

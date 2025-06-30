@@ -49,7 +49,6 @@ public:
 
         result += std::string(colStart, ' ');
         result += std::string(std::max(colEnd - colStart, 1), '^');
-        result += '\n';
 
         return result;
     }

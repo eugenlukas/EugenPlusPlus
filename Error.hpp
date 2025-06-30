@@ -29,3 +29,9 @@ class InvalidSyntaxError : public Error
 public:
 	InvalidSyntaxError(const Position& pos_start, const Position& pos_end, std::string details="") : Error(pos_start, pos_end, "Invalid Syntax", details) {}
 };
+
+class RuntimeError : public Error
+{
+public:
+	RuntimeError(const Position& pos_start, const Position& pos_end, std::string details="") : Error(pos_start, pos_end, "Runtime Error", details) {}
+};
