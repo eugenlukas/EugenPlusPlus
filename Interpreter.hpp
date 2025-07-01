@@ -68,12 +68,12 @@ private:
 class Interpreter
 {
 public:
+	Interpreter(SymbolTable& symbolTable) : symbolTable(symbolTable) {}
+
 	RTResult Visit(std::shared_ptr<Node> node);
 
-	void SetSymbolTable(SymbolTable& symbolTable) { this->symbolTable = symbolTable; }
-
 private:
-	SymbolTable symbolTable;
+	SymbolTable& symbolTable;
 
 	RTResult Visit_NumberNode(NumberNode& node);
 	RTResult Visit_BinOpNode(BinOpNode& node);

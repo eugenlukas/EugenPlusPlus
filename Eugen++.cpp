@@ -42,8 +42,7 @@ int main()
         //Print ast
         //std::cout << "AST: " << ast.GetNode()->Repr() << std::endl;
 
-        Interpreter interpreter;
-        interpreter.SetSymbolTable(globalSymbolTable);
+        Interpreter interpreter(globalSymbolTable);
         auto result = interpreter.Visit(ast.GetNode());
 
         if (result.HasError())
