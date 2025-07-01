@@ -20,6 +20,9 @@ void Lexer::Advance()
 
 MakeTokensResult Lexer::MakeTokens()
 {
+
+	//std::cout << "Make tokens with input: '" << text << "'" << std::endl;
+
 	std::vector<Token> tokens;
 
 	while (current_char != '\0')
@@ -28,6 +31,8 @@ MakeTokensResult Lexer::MakeTokens()
 			Advance();
 		else if (std::isdigit(current_char))
 			tokens.push_back(makeNumber());
+		else if (std::strchr(LETTERS, current_char))
+			tokens.push_back(makeIdentifier());
 		else
 		{
 			switch (current_char)
@@ -56,6 +61,10 @@ MakeTokensResult Lexer::MakeTokens()
 				break;
 			case '^':
 				tokens.push_back(Token(TT_POW, std::nullopt, pos));
+				Advance();
+				break;
+			case '=':
+				tokens.push_back(Token(TT_EQ, std::nullopt, pos));
 				Advance();
 				break;
 			case '(':
@@ -100,9 +109,32 @@ Token Lexer::makeNumber()
 			
 		Advance();
 	}
+
+	//std::cout << numStr << std::endl;
 	
 	if (dotCount == 0)
 		return Token(TT_INT, std::stod(numStr), posStart, pos);
 	else
 		return Token(TT_FLOAT, std::stod(numStr), posStart, pos);
+}
+
+Token Lexer::makeIdentifier()
+{
+	std::string id_str = "";
+	Position posStart = pos.Copy();
+
+	std::string letterStringUnderscore = std::string(LETTERS_DIGITS) + '_';
+	while (current_char != '\0' && letterStringUnderscore.find(current_char) != std::string::npos)
+	{
+		id_str += current_char;
+		Advance();
+	}
+
+	std::string tokType;
+	if (std::find(KEYWORDS.begin(), KEYWORDS.end(), id_str) != KEYWORDS.end())
+		tokType = TT_KEYWORD;
+	else
+		tokType = TT_IDENTIFIER;
+
+	return Token(tokType, id_str, posStart, pos);
 }

@@ -8,6 +8,10 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
         return Visit_BinOpNode(*binOp);
     if (auto unary = dynamic_cast<UnaryOpNode*>(node.get()))
         return Visit_UnaryOpNode(*unary);
+    if (auto varAccess = dynamic_cast<VarAccessNode*>(node.get()))
+        return Visit_VarAccsessNode(*varAccess);
+    if (auto varAssign = dynamic_cast<VarAssignNode*>(node.get()))
+        return Visit_VarAssignNode(*varAssign);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
 }
@@ -19,7 +23,7 @@ RTResult Interpreter::Visit_NumberNode(NumberNode& node)
 
     if (std::holds_alternative<int>(val))
         num = static_cast<double>(std::get<int>(val));
-    else
+    else if (std::holds_alternative<double>(val))
         num = std::get<double>(val);
 
     return RTResult().Success(num);
@@ -81,6 +85,31 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
     );
 }
 
+RTResult Interpreter::Visit_VarAccsessNode(VarAccessNode& node)
+{
+    RTResult res;
+
+    std::variant<int, double, std::string> varName = node.GetVarNameToken().GetValue();
+    std::optional<double> value = symbolTable.Get(std::get<std::string>(varName));
+
+    if (!value.has_value())
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "'varName' is not defined"));
+
+    return res.Success(value.value());
+}
+
+RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
+{
+    std::variant<int, double, std::string> varName = node.GetVarNameToken().GetValue();
+    RTResult res_value = Visit(node.GetValueNode());
+
+    if (res_value.HasError())
+        return res_value;
+
+    symbolTable.Set(std::get<std::string>(varName), res_value.GetValue().value());
+    return res_value.Success(res_value.GetValue().value());
+}
+
 RTResult& RTResult::Success(double value)
 {
     this->value = value;
@@ -91,4 +120,29 @@ RTResult& RTResult::Failure(std::unique_ptr<Error> error)
 {
     this->error = std::move(error);
     return *this;
+}
+
+void SymbolTable::Set(const std::string& name, double value)
+{
+    symbols[name] = value;
+}
+
+std::optional<double> SymbolTable::Get(const std::string& name) const
+{
+    auto it = symbols.find(name);
+    if (it != symbols.end())
+    {
+        return it->second;
+    }
+    // Check parent if not found locally
+    if (parent != nullptr)
+    {
+        return parent->Get(name);
+    }
+    return std::nullopt;
+}
+
+bool SymbolTable::Remove(const std::string& name)
+{
+    return symbols.erase(name) > 0;
 }

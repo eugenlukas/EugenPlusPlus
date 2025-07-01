@@ -25,6 +25,7 @@ public:
 
 private:
 	Token makeNumber();
+	Token makeIdentifier();
 
 private:
 	std::string fn;

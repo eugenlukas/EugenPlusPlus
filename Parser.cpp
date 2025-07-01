@@ -18,6 +18,7 @@ Token Parser::Advance()
 
 ParseResult Parser::Parse()
 {
+	//std::cout << "Parse!" << std::endl;
 	ParseResult res = Expr();
 	if (!res.HasError() && currentToken.GetType() != TT_EOF)
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '+', '-', '*' or '/'"));
@@ -31,25 +32,30 @@ ParseResult Parser::Atom()
 
 	if (tok.GetType() == TT_INT || tok.GetType() == TT_FLOAT)
 	{
-		res.Register(Advance());
+		res.RegisterAdvancement(Advance());
 		return res.Success(std::make_shared<NumberNode>(tok));
+	}
+	else if (tok.GetType() == TT_IDENTIFIER)
+	{
+		res.RegisterAdvancement(Advance());
+		return res.Success(std::make_shared<VarAccessNode>(tok));
 	}
 	else if (tok.GetType() == TT_LPAREN)
 	{
-		res.Register(Advance());
+		res.RegisterAdvancement(Advance());
 		std::shared_ptr<Node> expr = res.Register(Expr());
 		if (res.HasError())
 			return res;
 		if (currentToken.GetType() == TT_RPAREN)
 		{
-			res.Register(Advance());
+			res.RegisterAdvancement(Advance());
 			return res.Success(expr);
 		}
 		else
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')'"));
 	}
 
-	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, '+', '-' or ''("));
+	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-' or ''("));
 }
 
 ParseResult Parser::Power()
@@ -65,7 +71,7 @@ ParseResult Parser::Factor()
 
 	if (tok.GetType() == TT_PLUS || tok.GetType() == TT_MINUS)
 	{
-		res.Register(Advance());
+		res.RegisterAdvancement(Advance());
 		std::shared_ptr<Node> factor = res.Register(Factor());
 		if (res.HasError())
 			return res;
@@ -83,8 +89,37 @@ ParseResult Parser::Term()
 
 ParseResult Parser::Expr()
 {
+	ParseResult res;
+
+	if (currentToken.Matches(TT_KEYWORD, "VAR"))
+	{
+		res.RegisterAdvancement(Advance());
+
+		if (currentToken.GetType() != TT_IDENTIFIER)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
+
+		Token varName = currentToken;
+		res.RegisterAdvancement(Advance());
+
+		if (currentToken.GetType() != TT_EQ)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
+
+		res.RegisterAdvancement(Advance());
+		auto expr = res.Register(Expr());
+
+		if (res.HasError())
+			return res;
+		else
+			return res.Success(std::make_shared<VarAssignNode>(varName, expr));
+	}
+
 	std::vector<std::string> ops = { TT_PLUS, TT_MINUS };
-	return BinOp([this]() {return Term(); }, ops);
+	std::shared_ptr<Node> node = res.Register(BinOp([this]() {return Term(); }, ops));
+
+	if (res.HasError())
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-' or ''("));
+
+	return res.Success(node);
 }
 
 ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b)
@@ -101,7 +136,7 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::
 	while (std::find(ops.begin(), ops.end(), currentToken.GetType()) != ops.end())
 	{
 		Token opToken = currentToken;
-		res.Register(Advance());
+		res.RegisterAdvancement(Advance());
 		auto right = res.Register(func_b());
 		if (res.HasError())
 			return res;
@@ -113,15 +148,16 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::
 
 std::shared_ptr<Node> ParseResult::Register(const ParseResult& res)
 {
+	advancementCount += res.advancementCount;
 	if (res.error)
 		this->error = std::make_unique<Error>(*res.error);
 
 	return res.node;
 }
 
-std::optional<Token> ParseResult::Register(const Token& token)
+void ParseResult::RegisterAdvancement(const Token& token)
 {
-	return token;
+	advancementCount++;
 }
 
 ParseResult& ParseResult::Success(std::shared_ptr<Node> node)
@@ -132,6 +168,7 @@ ParseResult& ParseResult::Success(std::shared_ptr<Node> node)
 
 ParseResult& ParseResult::Failure(std::unique_ptr<Error> error)
 {
-	this->error = std::move(error);
+	if (error != nullptr || advancementCount == 0)
+		this->error = std::move(error);
 	return *this;
 }

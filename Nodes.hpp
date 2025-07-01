@@ -21,6 +21,38 @@ private:
 	Token token;
 };
 
+class VarAccessNode : public Node
+{
+public:
+	VarAccessNode(Token varNameTok);
+
+	std::string Repr() override;
+	Token GetVarNameToken() { return varNameTok; }
+	Position GetPosStart() { return posStart; }
+	Position GetPosEnd() { return posEnd; }
+
+private:
+	Token varNameTok;
+	Position posStart;
+	Position posEnd;
+};
+
+class VarAssignNode : public Node
+{
+public:
+	VarAssignNode(Token varNameTok, std::shared_ptr<Node> node);
+
+	std::string Repr() override;
+	Token GetVarNameToken() { return varNameTok; }
+	std::shared_ptr<Node> GetValueNode() { return node; }
+
+private:
+	Token varNameTok;
+	std::shared_ptr<Node> node;
+	Position posStart;
+	Position posEnd;
+};
+
 class BinOpNode : public Node
 {
 public:

@@ -37,7 +37,7 @@ public:
 	}
 
 	std::shared_ptr<Node> Register(const ParseResult& res);
-	std::optional<Token> Register(const Token& token);
+	void RegisterAdvancement(const Token& token);
 	ParseResult& Success(std::shared_ptr<Node> node);
 	ParseResult& Failure(std::unique_ptr<Error> error);
 
@@ -49,6 +49,7 @@ public:
 private:
 	std::unique_ptr<Error> error = nullptr;
 	std::shared_ptr<Node> node = nullptr;
+	int advancementCount = 0;
 };
 
 class Parser

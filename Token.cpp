@@ -1,10 +1,9 @@
 #include "Token.hpp"
-#include <string>
 
 Token::Token()
 {}
 
-Token::Token(const std::string & type_, std::optional<std::variant<int, double>> value, std::optional<Position> posStart, std::optional<Position> posEnd)
+Token::Token(const std::string & type_, std::optional<std::variant<int, double, std::string>> value, std::optional<Position> posStart, std::optional<Position> posEnd)
 {
 	type = type_;
 	this->value = value;
@@ -26,13 +25,32 @@ std::string Token::Repr()
 	{
 		if (std::holds_alternative<int>(value.value()))
 			return "INT:" + std::to_string(std::get<int>(value.value()));
-		else
+		else if (std::holds_alternative<double>(value.value()))
 			return "FLOAT:" + std::to_string(std::get<double>(value.value()));
+		else if (std::holds_alternative<std::string>(value.value()))
+			return type + ":" + std::get<std::string>(value.value());
 	}
 	return type;
 }
 
-std::variant<int, double> Token::GetValue() const
+bool Token::Matches(std::string type_, std::optional<std::variant<int, double, std::string>> value)
+{
+	//std::cout << "Type1: " << type << " zu Type2: " << type_ << std::endl;
+
+	if (!type.compare(type_))
+		if (this->value = value)
+			return true;
+		else
+		{
+			return false;
+		}
+	else
+	{
+		return false;
+	}
+}
+
+std::variant<int, double, std::string> Token::GetValue() const
 {
 	if (value.has_value())
 		return value.value();

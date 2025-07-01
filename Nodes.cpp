@@ -35,3 +35,30 @@ std::string UnaryOpNode::Repr()
 {
 	return "(" + opToken.Repr() + ", " + node->Repr() + ")";
 }
+
+VarAccessNode::VarAccessNode(Token varNameTok)
+{
+	this->varNameTok = varNameTok;
+
+	posStart = this->varNameTok.GetPosStart();
+	posEnd = this->varNameTok.GetPosEnd();
+}
+
+std::string VarAccessNode::Repr()
+{
+	return "(" + varNameTok.Repr() + ")";
+}
+
+VarAssignNode::VarAssignNode(Token varNameTok, std::shared_ptr<Node> node)
+{
+	this->varNameTok = varNameTok;
+	this->node = node;
+
+	posStart = this->varNameTok.GetPosStart();
+	posEnd = this->varNameTok.GetPosEnd();
+}
+
+std::string VarAssignNode::Repr()
+{
+	return "(" + varNameTok.Repr() + ", " + node->Repr() + ")";
+}

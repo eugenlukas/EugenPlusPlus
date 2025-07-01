@@ -7,6 +7,9 @@
 
 int main()
 {
+    SymbolTable globalSymbolTable = SymbolTable();
+    globalSymbolTable.Set("null", 0);
+
     while (true)
     {
         std::string text;
@@ -23,6 +26,9 @@ int main()
             continue;
         }
 
+        //Print tokenResult
+        //std::cout << "Token result: " << Helper::TokenVectorToString(tokenResult.tokens) << std::endl;
+
         // Generate AST
         Parser parser(tokenResult.tokens);
         ParseResult ast = parser.Parse();
@@ -34,9 +40,10 @@ int main()
         }
             
         //Print ast
-            //std::cout << ast.GetNode()->Repr() << std::endl;
+        //std::cout << "AST: " << ast.GetNode()->Repr() << std::endl;
 
         Interpreter interpreter;
+        interpreter.SetSymbolTable(globalSymbolTable);
         auto result = interpreter.Visit(ast.GetNode());
 
         if (result.HasError())
