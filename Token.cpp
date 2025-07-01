@@ -35,19 +35,7 @@ std::string Token::Repr()
 
 bool Token::Matches(std::string type_, std::optional<std::variant<int, double, std::string>> value)
 {
-	//std::cout << "Type1: " << type << " zu Type2: " << type_ << std::endl;
-
-	if (!type.compare(type_))
-		if (this->value = value)
-			return true;
-		else
-		{
-			return false;
-		}
-	else
-	{
-		return false;
-	}
+	return (type == type_) && (this->value == value);
 }
 
 std::variant<int, double, std::string> Token::GetValue() const

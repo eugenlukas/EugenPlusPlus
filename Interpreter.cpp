@@ -12,6 +12,8 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
         return Visit_VarAccsessNode(*varAccess);
     if (auto varAssign = dynamic_cast<VarAssignNode*>(node.get()))
         return Visit_VarAssignNode(*varAssign);
+    if (auto varIf = dynamic_cast<IfNode*>(node.get()))
+        return Visit_IfNode(*varIf);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
 }
@@ -128,7 +130,39 @@ RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
     return res_value.Success(res_value.GetValue().value());
 }
 
-RTResult& RTResult::Success(double value)
+RTResult Interpreter::Visit_IfNode(IfNode& node)
+{
+    RTResult res;
+
+    for (IfCase& ifCase : node.GetCases())
+    {
+        RTResult conditionValue = Visit(ifCase.GetCondition());
+        if (conditionValue.HasError())
+            return conditionValue;
+
+        if (conditionValue.GetValue().value() != 0)
+        {
+            RTResult exprValue = Visit(ifCase.GetExpr());
+            if (exprValue.HasError())
+                return exprValue;
+
+            return res.Success(exprValue.GetValue().value());
+        }
+    }
+
+    if (node.GetElseCase() != nullptr)
+    {
+        RTResult elseValue = Visit(node.GetElseCase());
+        if (elseValue.HasError())
+            return elseValue;
+
+        return res.Success(elseValue.GetValue().value());
+    }
+
+    return res.Success(std::nullopt);
+}
+
+RTResult& RTResult::Success(std::optional<double> value)
 {
     this->value = value;
     return *this;

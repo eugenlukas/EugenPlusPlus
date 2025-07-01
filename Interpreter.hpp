@@ -52,7 +52,7 @@ public:
 		}
 		return *this;
 	}
-	RTResult& Success(double value);
+	RTResult& Success(std::optional<double> value);
 	RTResult& Failure(std::unique_ptr<Error> error);
 
 	bool HasError() const { return error != nullptr; }
@@ -80,4 +80,5 @@ private:
 	RTResult Visit_VarAccsessNode(VarAccessNode& node);
 	RTResult Visit_VarAssignNode(VarAssignNode& node);
 	RTResult Visit_UnaryOpNode(UnaryOpNode& node);
+	RTResult Visit_IfNode(IfNode& node);
 };

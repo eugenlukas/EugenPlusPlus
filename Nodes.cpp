@@ -6,6 +6,9 @@ NumberNode::NumberNode()
 NumberNode::NumberNode(Token token)
 {
 	this->token = token;
+
+	posStart = token.GetPosStart();
+	posEnd = token.GetPosEnd();
 }
 
 std::string NumberNode::Repr()
@@ -61,4 +64,43 @@ VarAssignNode::VarAssignNode(Token varNameTok, std::shared_ptr<Node> node)
 std::string VarAssignNode::Repr()
 {
 	return "(" + varNameTok.Repr() + ", " + node->Repr() + ")";
+}
+
+IfNode::IfNode(std::vector<IfCase> cases, std::shared_ptr<Node> elseCase)
+{
+	this->cases = cases;
+	this->elseCase = elseCase;
+
+	if (!cases.empty())
+	{
+		posStart = cases[0].GetCondition()->GetPosStart();
+
+		if (elseCase != nullptr)
+		{
+			posEnd = elseCase->GetPosEnd();
+		}
+		else
+		{
+			posEnd = cases.back().GetCondition()->GetPosEnd();
+		}
+	}
+}
+
+std::string IfNode::Repr()
+{
+	std::string repr = "(IF ";
+
+	for (auto& ifCase : cases)
+	{
+		repr += "[Cond: " + ifCase.GetCondition()->Repr();
+		repr += ", Expr: " + ifCase.GetExpr()->Repr() + "] ";
+	}
+
+	if (elseCase != nullptr)
+	{
+		repr += "ELSE: " + elseCase->Repr();
+	}
+
+	repr += ")";
+	return repr;
 }

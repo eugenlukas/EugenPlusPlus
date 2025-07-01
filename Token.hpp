@@ -30,11 +30,15 @@ constexpr char DIGITS[]			= "0123456789";
 constexpr char LETTERS[]		= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 constexpr char LETTERS_DIGITS[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-const std::array<std::string, 4> KEYWORDS = {
+const std::array<std::string, 8> KEYWORDS = {
 	"VAR",
 	"AND",
 	"OR",
 	"NOT",
+	"IF",
+	"THEN",
+	"ELIF",
+	"ELSE"
 };
 
 class Token

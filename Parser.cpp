@@ -25,6 +25,64 @@ ParseResult Parser::Parse()
 	return res;
 }
 
+ParseResult Parser::IfExpr()
+{
+	ParseResult res;
+	std::vector<IfCase> cases;
+	std::shared_ptr<Node> elseCase;
+
+	if (!currentToken.Matches(TT_KEYWORD, "IF"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'IF'"));
+
+	res.RegisterAdvancement(Advance());
+
+	std::shared_ptr<Node> condition = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
+
+	res.RegisterAdvancement(Advance());
+
+	std::shared_ptr<Node> expr = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	cases.push_back(IfCase(condition, expr));
+
+	while (currentToken.Matches(TT_KEYWORD, "ELIF"))
+	{
+		res.RegisterAdvancement(Advance());
+
+		condition = res.Register(Expr());
+		if (res.HasError())
+			return res;
+
+		if (!currentToken.Matches(TT_KEYWORD, "THEN"))
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
+
+		res.RegisterAdvancement(Advance());
+
+		expr = res.Register(Expr());
+		if (res.HasError())
+			return res;
+
+		cases.push_back(IfCase(condition, expr));
+	}
+
+	if (currentToken.Matches(TT_KEYWORD, "ELSE"))
+	{
+		res.RegisterAdvancement(Advance());
+
+		elseCase = res.Register(Expr());
+		if (res.HasError())
+			return res;
+	}
+
+	return res.Success(std::make_shared<IfNode>(cases, elseCase));
+}
+
 ParseResult Parser::Atom()
 {
 	ParseResult res = ParseResult();
@@ -54,8 +112,15 @@ ParseResult Parser::Atom()
 		else
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')'"));
 	}
+	else if (tok.Matches(TT_KEYWORD, "IF"))
+	{
+		std::shared_ptr<Node> ifExpr = res.Register(IfExpr());
+		if (res.HasError())
+			return res;
+		return res.Success(ifExpr);
+	}
 
-	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-' or ''("));
+	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-' or '('"));
 }
 
 ParseResult Parser::Power()

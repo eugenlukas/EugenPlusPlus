@@ -1,11 +1,32 @@
 #pragma once
 #include "Token.hpp"
+#include <vector>
 
 class Node
 {
 public:
 	virtual std::string Repr() = 0;
+	virtual Position GetPosStart() { return posStart; }
+	virtual Position GetPosEnd() { return posEnd; }
 	virtual ~Node() = default;
+
+protected:
+	Position posStart;
+	Position posEnd;
+};
+
+class IfCase
+{
+public:
+	IfCase();
+	IfCase(std::shared_ptr<Node> condition, std::shared_ptr<Node> expr) : condition(condition), expr(expr) {}
+
+	std::shared_ptr<Node> GetCondition() { return condition; }
+	std::shared_ptr<Node> GetExpr() { return expr; }
+
+private:
+	std::shared_ptr<Node> condition;
+	std::shared_ptr<Node> expr;
 };
 
 class NumberNode : public Node
@@ -33,8 +54,6 @@ public:
 
 private:
 	Token varNameTok;
-	Position posStart;
-	Position posEnd;
 };
 
 class VarAssignNode : public Node
@@ -49,8 +68,6 @@ public:
 private:
 	Token varNameTok;
 	std::shared_ptr<Node> node;
-	Position posStart;
-	Position posEnd;
 };
 
 class BinOpNode : public Node
@@ -81,4 +98,18 @@ public:
 private:
 	Token opToken;
 	std::shared_ptr<Node> node;
+};
+
+class IfNode : public Node
+{
+public:
+	IfNode(std::vector<IfCase> cases, std::shared_ptr<Node> elseCase);
+
+	std::string Repr() override;
+	std::vector<IfCase> GetCases() { return cases; }
+	std::shared_ptr<Node> GetElseCase() { return elseCase; }
+
+private:
+	std::vector<IfCase> cases;
+	std::shared_ptr<Node> elseCase;
 };
