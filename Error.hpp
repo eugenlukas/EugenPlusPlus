@@ -24,6 +24,12 @@ public:
 	IllegalCharError(const Position& pos_start, const Position& pos_end, std::string details) : Error(pos_start, pos_end, "Illegal Character", details) {}
 };
 
+class ExpectedCharError : public Error
+{
+public:
+	ExpectedCharError(const Position& pos_start, const Position& pos_end, std::string details) : Error(pos_start, pos_end, "Expected Character", details) {}
+};
+
 class InvalidSyntaxError : public Error
 {
 public:

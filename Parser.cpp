@@ -87,6 +87,38 @@ ParseResult Parser::Term()
 	return BinOp([this]() {return Factor(); }, ops);
 }
 
+ParseResult Parser::ArithExpr()
+{
+	std::vector<std::string> ops = { TT_PLUS, TT_MINUS };
+	return BinOp([this]() {return Term(); }, ops);
+}
+
+ParseResult Parser::CompExpr()
+{
+	ParseResult res;
+
+	if (currentToken.Matches(TT_KEYWORD, "NOT"))
+	{
+		Token opToken = currentToken;
+		res.RegisterAdvancement(Advance());
+
+		std::shared_ptr<Node> node = res.Register(CompExpr());
+
+		if (res.HasError())
+			return res;
+
+		return res.Success(std::make_shared<UnaryOpNode>(opToken, node));
+	}
+
+	std::vector<std::string> ops = { TT_EQEQ, TT_NEQ, TT_LT, TT_GT, TT_LTEQ, TT_GTEQ };
+	std::shared_ptr<Node> node = res.Register(BinOp([this]() {return ArithExpr(); }, ops));
+
+	if (res.HasError())
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(' or 'NOT'"));
+
+	return res.Success(node);
+}
+
 ParseResult Parser::Expr()
 {
 	ParseResult res;
@@ -113,8 +145,11 @@ ParseResult Parser::Expr()
 			return res.Success(std::make_shared<VarAssignNode>(varName, expr));
 	}
 
-	std::vector<std::string> ops = { TT_PLUS, TT_MINUS };
-	std::shared_ptr<Node> node = res.Register(BinOp([this]() {return Term(); }, ops));
+	std::unordered_map<std::string, std::string> ops = {
+	{ TT_KEYWORD, "AND"},
+	{ TT_KEYWORD, "OR"}
+	};
+	std::shared_ptr<Node> node = res.Register(BinOp([this]() {return CompExpr(); }, ops));
 
 	if (res.HasError())
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-' or ''("));
@@ -134,6 +169,34 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::
 		return res;
 
 	while (std::find(ops.begin(), ops.end(), currentToken.GetType()) != ops.end())
+	{
+		Token opToken = currentToken;
+		res.RegisterAdvancement(Advance());
+		auto right = res.Register(func_b());
+		if (res.HasError())
+			return res;
+		left = std::make_shared<BinOpNode>(left, opToken, right);
+	}
+
+	return res.Success(left);
+}
+
+ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::unordered_map<std::string, std::string> typeValueOps, std::function<ParseResult()> func_b)
+{
+	if (func_b == nullptr)
+		func_b = func_a;
+
+	ParseResult res;
+	auto left = res.Register(func_a());
+
+	if (res.HasError())
+		return res;
+
+	while (
+		typeValueOps.count(currentToken.GetType()) &&
+		std::holds_alternative<std::string>(currentToken.GetValue()) &&
+		std::get<std::string>(currentToken.GetValue()) == typeValueOps.at(currentToken.GetType())
+		)
 	{
 		Token opToken = currentToken;
 		res.RegisterAdvancement(Advance());

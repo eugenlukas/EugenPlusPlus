@@ -65,9 +65,12 @@ public:
 	ParseResult Power();
 	ParseResult Factor();
 	ParseResult Term();
+	ParseResult ArithExpr();
+	ParseResult CompExpr();
 	ParseResult Expr();
 
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b=nullptr);
+	ParseResult BinOp(std::function<ParseResult()> func_a, std::unordered_map<std::string, std::string> typeValueOps, std::function<ParseResult()> func_b = nullptr);
 
 private:
 	std::vector<Token> tokens;

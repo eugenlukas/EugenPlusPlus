@@ -63,10 +63,6 @@ MakeTokensResult Lexer::MakeTokens()
 				tokens.push_back(Token(TT_POW, std::nullopt, pos));
 				Advance();
 				break;
-			case '=':
-				tokens.push_back(Token(TT_EQ, std::nullopt, pos));
-				Advance();
-				break;
 			case '(':
 				tokens.push_back(Token(TT_LPAREN, std::nullopt, pos));
 				Advance();
@@ -74,6 +70,24 @@ MakeTokensResult Lexer::MakeTokens()
 			case ')':
 				tokens.push_back(Token(TT_RPAREN, std::nullopt, pos));
 				Advance();
+				break;
+			case '!':
+			{
+				MakeMethodeResult res = makeNotEquals();
+				if (res.error != nullptr)
+					return MakeTokensResult({}, std::move(res.error));
+
+				tokens.push_back(res.token);
+				break;
+			}
+			case '=':
+				tokens.push_back(makeEquals());
+				break;
+			case '<':
+				tokens.push_back(makeLessThen());
+				break;
+			case '>':
+				tokens.push_back(makeGreaterThen());
 				break;
 			default:
 				Position pos_start = pos.Copy();
@@ -137,4 +151,67 @@ Token Lexer::makeIdentifier()
 		tokType = TT_IDENTIFIER;
 
 	return Token(tokType, id_str, posStart, pos);
+}
+
+MakeMethodeResult Lexer::makeNotEquals()
+{
+	Position posStart = pos.Copy();
+	Advance();
+
+	if (current_char == '=')
+	{
+		Advance();
+		return MakeMethodeResult(Token(TT_NEQ, std::nullopt, posStart, pos), nullptr);
+	}
+
+	Advance();
+	return MakeMethodeResult({}, std::make_unique<ExpectedCharError>(posStart, pos, "'=' (after '!')"));
+}
+
+Token Lexer::makeEquals()
+{
+	std::string tokType = TT_EQ;
+
+	Position posStart = pos.Copy();
+	Advance();
+
+	if (current_char == '=')
+	{
+		Advance();
+		tokType = TT_EQEQ;
+	}
+
+	return Token(tokType, std::nullopt, posStart, pos);
+}
+
+Token Lexer::makeLessThen()
+{
+	std::string tokType = TT_LT;
+
+	Position posStart = pos.Copy();
+	Advance();
+
+	if (current_char == '=')
+	{
+		Advance();
+		tokType = TT_LTEQ;
+	}
+
+	return Token(tokType, std::nullopt, posStart, pos);
+}
+
+Token Lexer::makeGreaterThen()
+{
+	std::string tokType = TT_GT;
+
+	Position posStart = pos.Copy();
+	Advance();
+
+	if (current_char == '=')
+	{
+		Advance();
+		tokType = TT_GTEQ;
+	}
+
+	return Token(tokType, std::nullopt, posStart, pos);
 }

@@ -8,7 +8,9 @@
 int main()
 {
     SymbolTable globalSymbolTable = SymbolTable();
-    globalSymbolTable.Set("null", 0);
+    globalSymbolTable.Set("NULL", 0);
+    globalSymbolTable.Set("TRUE", 1);
+    globalSymbolTable.Set("FALSE", 0);
 
     while (true)
     {

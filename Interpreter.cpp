@@ -59,6 +59,22 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
     }
     else if (node.GetOpToken().GetType() == TT_POW)
         return RTResult().Success(pow(l, r));
+    else if (node.GetOpToken().GetType() == TT_EQEQ)
+        return RTResult().Success(l == r);
+    else if (node.GetOpToken().GetType() == TT_NEQ)
+        return RTResult().Success(l != r);
+    else if (node.GetOpToken().GetType() == TT_LT)
+        return RTResult().Success(l < r);
+    else if (node.GetOpToken().GetType() == TT_GT)
+        return RTResult().Success(l > r);
+    else if (node.GetOpToken().GetType() == TT_LTEQ)
+        return RTResult().Success(l <= r);
+    else if (node.GetOpToken().GetType() == TT_GTEQ)
+        return RTResult().Success(l >= r);
+    else if (node.GetOpToken().Matches(TT_KEYWORD, "AND"))
+        return RTResult().Success(l && r);
+    else if (node.GetOpToken().Matches(TT_KEYWORD, "OR"))
+        return RTResult().Success(l || r);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Unknown binary operator"));
 }
@@ -75,6 +91,8 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
         return RTResult().Success(-num);
     if (op_type == TT_PLUS)
         return RTResult().Success(+num);
+    if (node.GetOpToken().Matches(TT_KEYWORD, "NOT"))
+        return RTResult().Success(num == 0 ? 1 : 0);
 
     return RTResult().Failure(
         std::make_unique<RuntimeError>(

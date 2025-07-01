@@ -15,6 +15,15 @@ typedef struct MakeTokensResult
 	std::unique_ptr<Error> error;
 } MakeTokensResult;
 
+typedef struct MakeMethodeResult {
+	MakeMethodeResult(const Token& token, std::unique_ptr<Error> error)
+		: token(token), error(std::move(error))
+	{ }
+
+	Token token;
+	std::unique_ptr<Error> error;
+};
+
 class Lexer
 {
 public:
@@ -26,6 +35,10 @@ public:
 private:
 	Token makeNumber();
 	Token makeIdentifier();
+	MakeMethodeResult makeNotEquals();
+	Token makeEquals();
+	Token makeLessThen();
+	Token makeGreaterThen();
 
 private:
 	std::string fn;
