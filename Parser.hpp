@@ -62,6 +62,8 @@ public:
 	ParseResult Parse();
 
 	ParseResult IfExpr();
+	ParseResult ForExpr();
+	ParseResult WhileExpr();
 	ParseResult Atom();
 	ParseResult Power();
 	ParseResult Factor();

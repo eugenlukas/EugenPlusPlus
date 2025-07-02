@@ -113,3 +113,37 @@ private:
 	std::vector<IfCase> cases;
 	std::shared_ptr<Node> elseCase;
 };
+
+class ForNode : public Node
+{
+public:
+	ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::shared_ptr<Node> endValueNode, std::shared_ptr<Node> stepValueNode=nullptr, std::shared_ptr<Node> bodyNode=nullptr);
+
+	std::string Repr() override;
+	Token GetVarNameTok() { return varNameTok; }
+	std::shared_ptr<Node> GetStartValueNode() { return startValueNode; }
+	std::shared_ptr<Node> GetEndValueNode() { return endValueNode; }
+	std::shared_ptr<Node> GetStepValueNode() { return stepValueNode; }
+	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
+
+private:
+	Token varNameTok;
+	std::shared_ptr<Node> startValueNode;
+	std::shared_ptr<Node> endValueNode;
+	std::shared_ptr<Node> stepValueNode;
+	std::shared_ptr<Node> bodyNode;
+};
+
+class WhileNode : public Node
+{
+public:
+	WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> bodyNode);
+
+	std::string Repr() override;
+	std::shared_ptr<Node> GetConditionNode() { return conditionNode; }
+	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
+
+private:
+	std::shared_ptr<Node> conditionNode;
+	std::shared_ptr<Node> bodyNode;
+};

@@ -60,6 +60,8 @@ public:
 	std::optional<double> GetValue() const { return value; }
 	std::string GetError() const { return error->AsString(); }
 
+	void SetValue(auto v) { value = v; }
+
 private:
 	std::unique_ptr<Error> error = nullptr;
 	std::optional<double> value = std::nullopt;
@@ -77,8 +79,10 @@ private:
 
 	RTResult Visit_NumberNode(NumberNode& node);
 	RTResult Visit_BinOpNode(BinOpNode& node);
-	RTResult Visit_VarAccsessNode(VarAccessNode& node);
+	RTResult Visit_VarAccessNode(VarAccessNode& node);
 	RTResult Visit_VarAssignNode(VarAssignNode& node);
 	RTResult Visit_UnaryOpNode(UnaryOpNode& node);
 	RTResult Visit_IfNode(IfNode& node);
+	RTResult Visit_ForNode(ForNode& node);
+	RTResult Visit_WhileNode(WhileNode& node);
 };

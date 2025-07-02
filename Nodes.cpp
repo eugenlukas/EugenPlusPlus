@@ -104,3 +104,34 @@ std::string IfNode::Repr()
 	repr += ")";
 	return repr;
 }
+
+ForNode::ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::shared_ptr<Node> endValueNode, std::shared_ptr<Node> stepValueNode, std::shared_ptr<Node> bodyNode)
+{
+	this->varNameTok = varNameTok;
+	this->startValueNode = startValueNode;
+	this->endValueNode = endValueNode;
+	this->startValueNode = startValueNode;
+	this->bodyNode = bodyNode;
+
+	posStart = varNameTok.GetPosStart();
+	posEnd = varNameTok.GetPosEnd();
+}
+
+std::string ForNode::Repr()
+{
+	return std::string();
+}
+
+WhileNode::WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> bodyNode)
+{
+	this->conditionNode = conditionNode;
+	this->bodyNode = bodyNode;
+
+	posStart = conditionNode->GetPosStart();
+	posEnd = bodyNode->GetPosEnd();
+}
+
+std::string WhileNode::Repr()
+{
+	return std::string();
+}

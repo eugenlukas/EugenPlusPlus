@@ -83,6 +83,88 @@ ParseResult Parser::IfExpr()
 	return res.Success(std::make_shared<IfNode>(cases, elseCase));
 }
 
+ParseResult Parser::ForExpr()
+{
+	ParseResult res;
+
+	if (!currentToken.Matches(TT_KEYWORD, "FOR"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'FOR'"));
+
+	res.RegisterAdvancement(Advance());
+
+	if (currentToken.GetType() != TT_IDENTIFIER)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
+
+	Token varName = currentToken;
+
+	res.RegisterAdvancement(Advance());
+
+	if (currentToken.GetType() != TT_EQ)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
+
+	res.RegisterAdvancement(Advance());
+
+	std::shared_ptr<Node> startValue = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	if (!currentToken.Matches(TT_KEYWORD, "TO"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'TO'"));
+
+	res.RegisterAdvancement(Advance());
+
+	std::shared_ptr<Node> endValue = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	std::shared_ptr<Node> stepValue;
+	if (currentToken.Matches(TT_KEYWORD, "STEP"))
+	{
+		res.RegisterAdvancement(Advance());
+		stepValue = res.Register(Expr());
+		if (res.HasError())
+			return res;
+	}
+	else
+		stepValue = nullptr;
+
+	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
+
+	res.RegisterAdvancement(Advance());
+
+	std::shared_ptr<Node> body = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	return res.Success(std::make_shared<ForNode>(varName, startValue, endValue, stepValue, body));
+}
+
+ParseResult Parser::WhileExpr()
+{
+	ParseResult res;
+
+	if (!currentToken.Matches(TT_KEYWORD, "WHILE"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'WHILE'"));
+
+	res.RegisterAdvancement(Advance());
+
+	std::shared_ptr<Node> condition = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
+
+	res.RegisterAdvancement(Advance());
+
+	std::shared_ptr<Node> body = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	return res.Success(std::make_shared<WhileNode>(condition, body));
+}
+
 ParseResult Parser::Atom()
 {
 	ParseResult res = ParseResult();
@@ -118,6 +200,20 @@ ParseResult Parser::Atom()
 		if (res.HasError())
 			return res;
 		return res.Success(ifExpr);
+	}
+	else if (tok.Matches(TT_KEYWORD, "FOR"))
+	{
+		std::shared_ptr<Node> forExpr = res.Register(ForExpr());
+		if (res.HasError())
+			return res;
+		return res.Success(forExpr);
+	}
+	else if (tok.Matches(TT_KEYWORD, "WHILE"))
+	{
+		std::shared_ptr<Node> whileExpr = res.Register(WhileExpr());
+		if (res.HasError())
+			return res;
+		return res.Success(whileExpr);
 	}
 
 	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-' or '('"));

@@ -1,4 +1,5 @@
 #include "Interpreter.hpp"
+#include <functional>
 
 RTResult Interpreter::Visit(std::shared_ptr<Node> node)
 {
@@ -9,11 +10,15 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
     if (auto unary = dynamic_cast<UnaryOpNode*>(node.get()))
         return Visit_UnaryOpNode(*unary);
     if (auto varAccess = dynamic_cast<VarAccessNode*>(node.get()))
-        return Visit_VarAccsessNode(*varAccess);
+        return Visit_VarAccessNode(*varAccess);
     if (auto varAssign = dynamic_cast<VarAssignNode*>(node.get()))
         return Visit_VarAssignNode(*varAssign);
     if (auto varIf = dynamic_cast<IfNode*>(node.get()))
         return Visit_IfNode(*varIf);
+    if (auto for_ = dynamic_cast<ForNode*>(node.get()))
+        return Visit_ForNode(*for_);
+    if (auto while_ = dynamic_cast<WhileNode*>(node.get()))
+        return Visit_WhileNode(*while_);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
 }
@@ -105,7 +110,7 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
     );
 }
 
-RTResult Interpreter::Visit_VarAccsessNode(VarAccessNode& node)
+RTResult Interpreter::Visit_VarAccessNode(VarAccessNode& node)
 {
     RTResult res;
 
@@ -113,7 +118,7 @@ RTResult Interpreter::Visit_VarAccsessNode(VarAccessNode& node)
     std::optional<double> value = symbolTable.Get(std::get<std::string>(varName));
 
     if (!value.has_value())
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "'varName' is not defined"));
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "'" + std::get<std::string>(varName) + "' is not defined"));
 
     return res.Success(value.value());
 }
@@ -157,6 +162,72 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
             return elseValue;
 
         return res.Success(elseValue.GetValue().value());
+    }
+
+    return res.Success(std::nullopt);
+}
+
+RTResult Interpreter::Visit_ForNode(ForNode& node)
+{
+    RTResult res;
+
+    RTResult startValue = Visit(node.GetStartValueNode());
+    if (startValue.HasError())
+        return startValue;
+
+    RTResult endValue = Visit(node.GetEndValueNode());
+    if (endValue.HasError())
+        return endValue;
+
+    RTResult stepValue;
+    if (node.GetStepValueNode() != nullptr)
+    {
+        stepValue = Visit(node.GetStepValueNode());
+        if (stepValue.HasError())
+            return startValue;
+    }
+    else
+        stepValue.SetValue(1);
+
+    std::function<bool(int)> condition;
+
+    if (stepValue.GetValue().value() >= 0)
+    {
+        condition = [=](int i) { return i < endValue.GetValue().value(); };
+    }
+    else
+    {
+        condition = [=](int i) { return i > endValue.GetValue().value(); };
+    }
+
+    for (int i = startValue.GetValue().value(); condition(i); i += stepValue.GetValue().value())
+    {
+        symbolTable.Set(std::get<std::string>(node.GetVarNameTok().GetValue()), i);
+
+        res = Visit(node.GetBodyNode());
+        if (res.HasError())
+            return res;
+    }
+
+    return res.Success(std::nullopt);
+}
+
+RTResult Interpreter::Visit_WhileNode(WhileNode& node)
+{
+    RTResult res;
+
+    while (true)
+    {
+        auto condition = Visit(node.GetConditionNode());
+        if (condition.HasError())
+            return condition;
+
+        if (condition.GetValue() == 0)
+            break;
+
+        res = Visit(node.GetBodyNode());
+        if (res.HasError())
+            return res;
     }
 
     return res.Success(std::nullopt);
