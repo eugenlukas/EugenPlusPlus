@@ -37,7 +37,7 @@ public:
 	}
 
 	std::shared_ptr<Node> Register(const ParseResult& res);
-	void RegisterAdvancement(const Token& token);
+	void RegisterAdvancement();
 	ParseResult& Success(std::shared_ptr<Node> node);
 	ParseResult& Failure(std::unique_ptr<Error> error);
 
@@ -45,6 +45,8 @@ public:
 
 	std::shared_ptr<Node> GetNode() const { return node; }
 	std::string GetError() const { return error->AsString(); }
+	Error* GetErrorPtr() { return error.get(); }
+	int GetAdvancementCount() const { return advancementCount; }
 
 private:
 	std::unique_ptr<Error> error = nullptr;
@@ -75,7 +77,7 @@ public:
 	ParseResult FuncDef();
 
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b=nullptr);
-	ParseResult BinOp(std::function<ParseResult()> func_a, std::unordered_map<std::string, std::string> typeValueOps, std::function<ParseResult()> func_b = nullptr);
+	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::pair<std::string, std::string>> typeValueOps, std::function<ParseResult()> func_b = nullptr);
 
 private:
 	std::vector<Token> tokens;

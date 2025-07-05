@@ -31,18 +31,22 @@ ParseResult Parser::Expr()
 
 	if (currentToken.Matches(TT_KEYWORD, "VAR"))
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 
 		if (currentToken.GetType() != TT_IDENTIFIER)
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
 
 		Token varName = currentToken;
-		res.RegisterAdvancement(Advance());
+
+		Advance();
+		res.RegisterAdvancement();
 
 		if (currentToken.GetType() != TT_EQ)
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
 
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		auto expr = res.Register(Expr());
 
 		if (res.HasError())
@@ -51,14 +55,18 @@ ParseResult Parser::Expr()
 			return res.Success(std::make_shared<VarAssignNode>(varName, expr));
 	}
 
-	std::unordered_map<std::string, std::string> ops = {
+	std::vector<std::pair<std::string, std::string>> ops = {
 	{ TT_KEYWORD, "AND"},
 	{ TT_KEYWORD, "OR"}
 	};
 	std::shared_ptr<Node> node = res.Register(BinOp([this]() {return CompExpr(); }, ops));
 
 	if (res.HasError())
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(', 'IF', 'FOR', 'WHILE', 'FUNC'"));
+	{
+		if (res.GetAdvancementCount() == 0 && !res.GetErrorPtr())
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(),"Expected int, float, identifier, VAR, '+', '-', '(', 'IF', 'FOR', 'WHILE', 'FUNC'"));
+		return res;
+	}
 
 	return res.Success(node);
 }
@@ -70,7 +78,9 @@ ParseResult Parser::CompExpr()
 	if (currentToken.Matches(TT_KEYWORD, "NOT"))
 	{
 		Token opToken = currentToken;
-		res.RegisterAdvancement(Advance());
+
+		Advance();
+		res.RegisterAdvancement();
 
 		std::shared_ptr<Node> node = res.Register(CompExpr());
 
@@ -84,7 +94,11 @@ ParseResult Parser::CompExpr()
 	std::shared_ptr<Node> node = res.Register(BinOp([this]() {return ArithExpr(); }, ops));
 
 	if (res.HasError())
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(' or 'NOT'"));
+	{
+		if (res.GetAdvancementCount() == 0 && !res.GetErrorPtr())
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(' or 'NOT'"));
+		return res;
+	}
 
 	return res.Success(node);
 }
@@ -108,7 +122,8 @@ ParseResult Parser::Factor()
 
 	if (tok.GetType() == TT_PLUS || tok.GetType() == TT_MINUS)
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		std::shared_ptr<Node> factor = res.Register(Factor());
 		if (res.HasError())
 			return res;
@@ -134,12 +149,16 @@ ParseResult Parser::Call()
 
 	if (currentToken.GetType() == TT_LPAREN)
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		
 		std::vector<std::shared_ptr<Node>> argNodes;
 
 		if (currentToken.GetType() == TT_RPAREN)
-			res.RegisterAdvancement(Advance());
+		{
+			Advance();
+			res.RegisterAdvancement();
+		}
 		else
 		{
 			argNodes.push_back(res.Register(Expr()));
@@ -148,7 +167,8 @@ ParseResult Parser::Call()
 
 			while (currentToken.GetType() == TT_COMMA)
 			{
-				res.RegisterAdvancement(Advance());
+				Advance();
+				res.RegisterAdvancement();
 
 				argNodes.push_back(res.Register(Expr()));
 				if (res.HasError())
@@ -158,7 +178,8 @@ ParseResult Parser::Call()
 			if (currentToken.GetType() != TT_RPAREN)
 				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ',' or ')'"));
 
-			res.RegisterAdvancement(Advance());
+			Advance();
+			res.RegisterAdvancement();
 		}
 
 		return res.Success(std::make_shared<CallNode>(atom, argNodes));
@@ -174,23 +195,27 @@ ParseResult Parser::Atom()
 
 	if (tok.GetType() == TT_INT || tok.GetType() == TT_FLOAT)
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		return res.Success(std::make_shared<NumberNode>(tok));
 	}
 	else if (tok.GetType() == TT_IDENTIFIER)
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		return res.Success(std::make_shared<VarAccessNode>(tok));
 	}
 	else if (tok.GetType() == TT_LPAREN)
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		std::shared_ptr<Node> expr = res.Register(Expr());
 		if (res.HasError())
 			return res;
 		if (currentToken.GetType() == TT_RPAREN)
 		{
-			res.RegisterAdvancement(Advance());
+			Advance();
+			res.RegisterAdvancement();
 			return res.Success(expr);
 		}
 		else
@@ -237,7 +262,8 @@ ParseResult Parser::IfExpr()
 	if (!currentToken.Matches(TT_KEYWORD, "IF"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'IF'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> condition = res.Register(Expr());
 	if (res.HasError())
@@ -246,7 +272,8 @@ ParseResult Parser::IfExpr()
 	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> expr = res.Register(Expr());
 	if (res.HasError())
@@ -256,7 +283,8 @@ ParseResult Parser::IfExpr()
 
 	while (currentToken.Matches(TT_KEYWORD, "ELIF"))
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 
 		condition = res.Register(Expr());
 		if (res.HasError())
@@ -265,7 +293,8 @@ ParseResult Parser::IfExpr()
 		if (!currentToken.Matches(TT_KEYWORD, "THEN"))
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
 
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 
 		expr = res.Register(Expr());
 		if (res.HasError())
@@ -276,7 +305,8 @@ ParseResult Parser::IfExpr()
 
 	if (currentToken.Matches(TT_KEYWORD, "ELSE"))
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 
 		elseCase = res.Register(Expr());
 		if (res.HasError())
@@ -293,19 +323,22 @@ ParseResult Parser::ForExpr()
 	if (!currentToken.Matches(TT_KEYWORD, "FOR"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'FOR'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	if (currentToken.GetType() != TT_IDENTIFIER)
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
 
 	Token varName = currentToken;
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	if (currentToken.GetType() != TT_EQ)
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> startValue = res.Register(Expr());
 	if (res.HasError())
@@ -314,7 +347,8 @@ ParseResult Parser::ForExpr()
 	if (!currentToken.Matches(TT_KEYWORD, "TO"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'TO'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> endValue = res.Register(Expr());
 	if (res.HasError())
@@ -323,7 +357,8 @@ ParseResult Parser::ForExpr()
 	std::shared_ptr<Node> stepValue;
 	if (currentToken.Matches(TT_KEYWORD, "STEP"))
 	{
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		stepValue = res.Register(Expr());
 		if (res.HasError())
 			return res;
@@ -334,7 +369,8 @@ ParseResult Parser::ForExpr()
 	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> body = res.Register(Expr());
 	if (res.HasError())
@@ -350,7 +386,8 @@ ParseResult Parser::WhileExpr()
 	if (!currentToken.Matches(TT_KEYWORD, "WHILE"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'WHILE'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> condition = res.Register(Expr());
 	if (res.HasError())
@@ -359,7 +396,8 @@ ParseResult Parser::WhileExpr()
 	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> body = res.Register(Expr());
 	if (res.HasError())
@@ -375,14 +413,16 @@ ParseResult Parser::FuncDef()
 	if (!currentToken.Matches(TT_KEYWORD, "FUNC"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'FUNC'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::optional<Token> varNameTok;
 	if (currentToken.GetType() == TT_IDENTIFIER)
 	{
 		varNameTok = currentToken;
 
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 
 		if (currentToken.GetType() != TT_LPAREN)
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '('"));
@@ -395,7 +435,8 @@ ParseResult Parser::FuncDef()
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier or '('"));
 	}
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 	
 	std::vector<Token> argNameToks;
 
@@ -403,23 +444,28 @@ ParseResult Parser::FuncDef()
 	{
 		argNameToks.push_back(currentToken);
 
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 
 		while (currentToken.GetType() == TT_COMMA)
 		{
-			res.RegisterAdvancement(Advance());
+			Advance();
+			res.RegisterAdvancement();
 
 			if (currentToken.GetType() != TT_IDENTIFIER)
 				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
 
 			argNameToks.push_back(currentToken);
-			res.RegisterAdvancement(Advance());
+
+			Advance();
+			res.RegisterAdvancement();
 		}
 
 		if (currentToken.GetType() != TT_RPAREN)
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ',' or ')'"));
 
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 	}
 	else
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier or '('"));
@@ -427,7 +473,8 @@ ParseResult Parser::FuncDef()
 	if (currentToken.GetType() != TT_ARROW)
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '->'"));
 
-	res.RegisterAdvancement(Advance());
+	Advance();
+	res.RegisterAdvancement();
 
 	std::shared_ptr<Node> nodeToReturn = res.Register(Expr());
 	if (res.HasError())
@@ -450,7 +497,8 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::
 	while (std::find(ops.begin(), ops.end(), currentToken.GetType()) != ops.end())
 	{
 		Token opToken = currentToken;
-		res.RegisterAdvancement(Advance());
+		Advance();
+		res.RegisterAdvancement();
 		auto right = res.Register(func_b());
 		if (res.HasError())
 			return res;
@@ -460,7 +508,7 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::
 	return res.Success(left);
 }
 
-ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::unordered_map<std::string, std::string> typeValueOps, std::function<ParseResult()> func_b)
+ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::pair<std::string, std::string>> typeValueOps, std::function<ParseResult()> func_b)
 {
 	if (func_b == nullptr)
 		func_b = func_a;
@@ -471,18 +519,29 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::unordered_ma
 	if (res.HasError())
 		return res;
 
-	while (
-		typeValueOps.count(currentToken.GetType()) &&
-		std::holds_alternative<std::string>(currentToken.GetValue()) &&
-		std::get<std::string>(currentToken.GetValue()) == typeValueOps.at(currentToken.GetType())
-		)
+	while (true)
 	{
-		Token opToken = currentToken;
-		res.RegisterAdvancement(Advance());
-		auto right = res.Register(func_b());
-		if (res.HasError())
-			return res;
-		left = std::make_shared<BinOpNode>(left, opToken, right);
+		bool matched = false;
+		for (auto& [type, value] : typeValueOps)
+		{
+			if (currentToken.GetType() == type && currentToken.Matches(type, value))
+			{
+				Token opToken = currentToken;
+				Advance();
+				res.RegisterAdvancement();
+
+				auto right = res.Register(func_b());
+				if (res.HasError())
+					return res;
+
+				left = std::make_shared<BinOpNode>(left, opToken, right);
+				matched = true;
+				break;
+			}
+		}
+
+		if (!matched)
+			break;
 	}
 
 	return res.Success(left);
@@ -497,7 +556,7 @@ std::shared_ptr<Node> ParseResult::Register(const ParseResult& res)
 	return res.node;
 }
 
-void ParseResult::RegisterAdvancement(const Token& token)
+void ParseResult::RegisterAdvancement()
 {
 	advancementCount++;
 }
