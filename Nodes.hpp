@@ -147,3 +147,33 @@ private:
 	std::shared_ptr<Node> conditionNode;
 	std::shared_ptr<Node> bodyNode;
 };
+
+class FuncDefNode : public Node
+{
+public:
+	FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode);
+
+	std::string Repr() override;
+	std::optional<Token> GetVarNameTok() { return varNameTok; }
+	std::vector<Token> GetArgNameToks() { return argNameToks; }
+	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
+
+private:
+	std::optional<Token> varNameTok;
+	std::vector<Token> argNameToks;
+	std::shared_ptr<Node> bodyNode;
+};
+
+class CallNode : public Node
+{
+public:
+	CallNode(std::shared_ptr<Node> nodeToCall, std::vector<std::shared_ptr<Node>> argNodes);
+
+	std::string Repr() override;
+	std::shared_ptr<Node> GetNodeToCall() { return nodeToCall; }
+	std::vector<std::shared_ptr<Node>> GetArgNodes() { return argNodes; }
+
+private:
+	std::shared_ptr<Node> nodeToCall;
+	std::vector<std::shared_ptr<Node>> argNodes;
+};

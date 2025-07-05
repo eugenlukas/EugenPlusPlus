@@ -135,3 +135,42 @@ std::string WhileNode::Repr()
 {
 	return std::string();
 }
+
+FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode)
+{
+	this->varNameTok = varNameTok;
+	this->argNameToks = argNameToks;
+	this->bodyNode = bodyNode;
+
+	if (varNameTok.has_value())
+		posStart = varNameTok.value().GetPosStart();
+	else if (argNameToks.size() > 0)
+		posStart = argNameToks[0].GetPosStart();
+	else
+		posStart = bodyNode->GetPosStart();
+
+	posEnd = bodyNode->GetPosEnd();
+}
+
+std::string FuncDefNode::Repr()
+{
+	return std::string();
+}
+
+CallNode::CallNode(std::shared_ptr<Node> nodeToCall, std::vector<std::shared_ptr<Node>> argNodes)
+{
+	this->nodeToCall = nodeToCall;
+	this->argNodes = argNodes;
+
+	posStart = nodeToCall->GetPosStart();
+
+	if (argNodes.size() > 0)
+		posEnd = argNodes.back()->GetPosEnd();
+	else
+		posEnd = nodeToCall->GetPosEnd();
+}
+
+std::string CallNode::Repr()
+{
+	return std::string();
+}

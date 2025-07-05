@@ -19,6 +19,10 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
         return Visit_ForNode(*for_);
     if (auto while_ = dynamic_cast<WhileNode*>(node.get()))
         return Visit_WhileNode(*while_);
+    if (auto funcDef = dynamic_cast<FuncDefNode*>(node.get()))
+        return Visit_FuncDefNode(*funcDef);
+    if (auto call = dynamic_cast<CallNode*>(node.get()))
+        return Visit_CallNode(*call);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
 }
@@ -114,24 +118,33 @@ RTResult Interpreter::Visit_VarAccessNode(VarAccessNode& node)
 {
     RTResult res;
 
-    std::variant<int, double, std::string> varName = node.GetVarNameToken().GetValue();
-    std::optional<double> value = symbolTable.Get(std::get<std::string>(varName));
+    std::string varName = std::get<std::string>(node.GetVarNameToken().GetValue());
+    auto value = symbolTable.Get(varName);
 
     if (!value.has_value())
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "'" + std::get<std::string>(varName) + "' is not defined"));
+    {
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "'" + varName + "' is not defined"));
+    }
 
-    return res.Success(value.value());
+    if (std::holds_alternative<double>(value.value()))
+    {
+        return res.Success(std::get<double>(value.value()));
+    }
+    else
+    {
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Variable is not a number"));
+    }
 }
 
 RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
 {
-    std::variant<int, double, std::string> varName = node.GetVarNameToken().GetValue();
+    std::string varName = std::get<std::string>(node.GetVarNameToken().GetValue());
     RTResult res_value = Visit(node.GetValueNode());
 
     if (res_value.HasError())
         return res_value;
 
-    symbolTable.Set(std::get<std::string>(varName), res_value.GetValue().value());
+    symbolTable.Set(varName, res_value.GetValue().value());
     return res_value.Success(res_value.GetValue().value());
 }
 
@@ -192,17 +205,13 @@ RTResult Interpreter::Visit_ForNode(ForNode& node)
     std::function<bool(int)> condition;
 
     if (stepValue.GetValue().value() >= 0)
-    {
         condition = [=](int i) { return i < endValue.GetValue().value(); };
-    }
     else
-    {
         condition = [=](int i) { return i > endValue.GetValue().value(); };
-    }
 
     for (int i = startValue.GetValue().value(); condition(i); i += stepValue.GetValue().value())
     {
-        symbolTable.Set(std::get<std::string>(node.GetVarNameTok().GetValue()), i);
+        symbolTable.Set(std::get<std::string>(node.GetVarNameTok().GetValue()), static_cast<double>(i));
 
         res = Visit(node.GetBodyNode());
         if (res.HasError())
@@ -233,6 +242,58 @@ RTResult Interpreter::Visit_WhileNode(WhileNode& node)
     return res.Success(std::nullopt);
 }
 
+RTResult Interpreter::Visit_FuncDefNode(FuncDefNode& node)
+{
+    RTResult res;
+
+    if (node.GetVarNameTok().has_value())
+    {
+        std::string funcName = std::get<std::string>(node.GetVarNameTok().value().GetValue());
+        symbolTable.Set(funcName, node);
+    }
+
+    return res.Success(std::nullopt);
+}
+
+RTResult Interpreter::Visit_CallNode(CallNode& node)
+{
+    RTResult res;
+    std::string funcName;
+    if (auto varAccess = dynamic_cast<VarAccessNode*>(node.GetNodeToCall().get()))
+        funcName = std::get<std::string>(varAccess->GetVarNameToken().GetValue());
+    else
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Invalid function name"));
+
+    auto funcValue = symbolTable.Get(funcName);
+    if (!funcValue.has_value() || !std::holds_alternative<FuncDefNode>(funcValue.value()))
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Function '" + funcName + "' not found"));
+
+    FuncDefNode funcNode = std::get<FuncDefNode>(funcValue.value());
+
+    if (node.GetArgNodes().size() != funcNode.GetArgNameToks().size())
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Incorrect number of arguments"));
+
+    // Save current symbol table
+    SymbolTable localSymbolTable(&symbolTable);
+
+    // Assign arguments
+    for (size_t i = 0; i < node.GetArgNodes().size(); ++i)
+    {
+        auto argRes = Visit(node.GetArgNodes()[i]);
+        if (argRes.HasError()) return argRes;
+
+        std::string argName = std::get<std::string>(funcNode.GetArgNameToks()[i].GetValue());
+        localSymbolTable.Set(argName, argRes.GetValue().value());
+    }
+
+    // Execute function body
+    Interpreter funcInterpreter(localSymbolTable);
+    auto result = funcInterpreter.Visit(funcNode.GetBodyNode());
+    if (result.HasError()) return result;
+
+    return res.Success(result.GetValue());
+}
+
 RTResult& RTResult::Success(std::optional<double> value)
 {
     this->value = value;
@@ -243,29 +304,4 @@ RTResult& RTResult::Failure(std::unique_ptr<Error> error)
 {
     this->error = std::move(error);
     return *this;
-}
-
-void SymbolTable::Set(const std::string& name, double value)
-{
-    symbols[name] = value;
-}
-
-std::optional<double> SymbolTable::Get(const std::string& name) const
-{
-    auto it = symbols.find(name);
-    if (it != symbols.end())
-    {
-        return it->second;
-    }
-    // Check parent if not found locally
-    if (parent != nullptr)
-    {
-        return parent->Get(name);
-    }
-    return std::nullopt;
-}
-
-bool SymbolTable::Remove(const std::string& name)
-{
-    return symbols.erase(name) > 0;
 }

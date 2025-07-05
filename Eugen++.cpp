@@ -8,14 +8,14 @@
 int main()
 {
     SymbolTable globalSymbolTable = SymbolTable();
-    globalSymbolTable.Set("NULL", 0);
-    globalSymbolTable.Set("TRUE", 1);
-    globalSymbolTable.Set("FALSE", 0);
+    globalSymbolTable.Set("NULL", static_cast<double>(0));
+    globalSymbolTable.Set("TRUE", static_cast<double>(1));
+    globalSymbolTable.Set("FALSE", static_cast<double>(0));
 
     while (true)
     {
         std::string text;
-        std::cout << "basic > ";
+        std::cout << "E++ > ";
         std::getline(std::cin, text);
 
         // Generate tokens

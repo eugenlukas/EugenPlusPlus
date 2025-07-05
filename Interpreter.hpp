@@ -5,20 +5,31 @@
 #include "Error.hpp"
 #include <unordered_map>
 
+using SymbolValue = std::variant<double, FuncDefNode>;
+
 class SymbolTable
 {
 public:
 	SymbolTable() = default;
 	SymbolTable(SymbolTable* parent) : parent(parent) {}
 
-	void Set(const std::string& name, double value);
+	void Set(const std::string& name, const SymbolValue& value)
+	{
+		symbols[name] = value;
+	}
 
-	std::optional<double> Get(const std::string& name) const;
-
-	bool Remove(const std::string& name);
+	std::optional<SymbolValue> Get(const std::string& name) const
+	{
+		auto it = symbols.find(name);
+		if (it != symbols.end())
+			return it->second;
+		if (parent != nullptr)
+			return parent->Get(name);
+		return std::nullopt;
+	}
 
 private:
-	std::unordered_map<std::string, double> symbols;
+	std::unordered_map<std::string, SymbolValue> symbols;
 	SymbolTable* parent = nullptr;
 };
 
@@ -85,4 +96,6 @@ private:
 	RTResult Visit_IfNode(IfNode& node);
 	RTResult Visit_ForNode(ForNode& node);
 	RTResult Visit_WhileNode(WhileNode& node);
+	RTResult Visit_FuncDefNode(FuncDefNode& node);
+	RTResult Visit_CallNode(CallNode& node);
 };

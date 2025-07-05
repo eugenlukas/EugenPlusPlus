@@ -48,8 +48,7 @@ MakeTokensResult Lexer::MakeTokens()
 				Advance();
 				break;
 			case '-':
-				tokens.push_back(Token(TT_MINUS, std::nullopt, pos));
-				Advance();
+				tokens.push_back(makeMinusOrArrow());
 				break;
 			case '*':
 				tokens.push_back(Token(TT_MUL, std::nullopt, pos));
@@ -88,6 +87,10 @@ MakeTokensResult Lexer::MakeTokens()
 				break;
 			case '>':
 				tokens.push_back(makeGreaterThen());
+				break;
+			case ',':
+				tokens.push_back(Token(TT_COMMA, std::nullopt, pos));
+				Advance();
 				break;
 			default:
 				Position pos_start = pos.Copy();
@@ -151,6 +154,22 @@ Token Lexer::makeIdentifier()
 		tokType = TT_IDENTIFIER;
 
 	return Token(tokType, id_str, posStart, pos);
+}
+
+Token Lexer::makeMinusOrArrow()
+{
+	std::string tokType = TT_MINUS;
+	Position posStart = pos.Copy();
+
+	Advance();
+
+	if (current_char == '>')
+	{
+		Advance();
+		tokType = TT_ARROW;
+	}
+
+	return Token(tokType, std::nullopt, posStart, pos);
 }
 
 MakeMethodeResult Lexer::makeNotEquals()

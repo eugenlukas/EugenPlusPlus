@@ -24,13 +24,15 @@ constexpr char TT_LT[]			= "LT";
 constexpr char TT_GT[]			= "GT";
 constexpr char TT_LTEQ[]		= "LTEQ";
 constexpr char TT_GTEQ[]		= "GTEQ";
+constexpr char TT_COMMA[]		= "COMMA";
+constexpr char TT_ARROW[]		= "ARROW";
 constexpr char TT_EOF[]			= "EOF";
 
 constexpr char DIGITS[]			= "0123456789";
 constexpr char LETTERS[]		= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 constexpr char LETTERS_DIGITS[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-const std::array<std::string, 12> KEYWORDS = {
+const std::array<std::string, 13> KEYWORDS = {
 	"VAR",
 	"AND",
 	"OR",
@@ -42,7 +44,8 @@ const std::array<std::string, 12> KEYWORDS = {
 	"FOR",
 	"TO",
 	"STEP",
-	"WHILE"
+	"WHILE",
+	"FUNC"
 };
 
 class Token
