@@ -8,6 +8,7 @@
 
 constexpr char TT_INT[]			= "INT";
 constexpr char TT_FLOAT[]		= "FLOAT";
+constexpr char TT_STRING[]		= "STRING";
 constexpr char TT_IDENTIFIER[]	= "IDENTIFIER";
 constexpr char TT_KEYWORD[]		= "KEYWORD";
 constexpr char TT_PLUS[]		= "PLUS";

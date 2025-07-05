@@ -63,19 +63,19 @@ public:
 		}
 		return *this;
 	}
-	RTResult& Success(std::optional<double> value);
+	RTResult& Success(std::optional<std::variant<double, std::string>> value);
 	RTResult& Failure(std::unique_ptr<Error> error);
 
 	bool HasError() const { return error != nullptr; }
 
-	std::optional<double> GetValue() const { return value; }
+	std::optional<std::variant<double, std::string>> GetValue() const { return value; }
 	std::string GetError() const { return error->AsString(); }
 
-	void SetValue(auto v) { value = v; }
+	void SetValue(std::optional<std::variant<double, std::string>> v) { value = v; }
 
 private:
 	std::unique_ptr<Error> error = nullptr;
-	std::optional<double> value = std::nullopt;
+	std::optional<std::variant<double, std::string>> value = std::nullopt;
 };
 
 class Interpreter
@@ -89,6 +89,7 @@ private:
 	SymbolTable& symbolTable;
 
 	RTResult Visit_NumberNode(NumberNode& node);
+	RTResult Visit_StringNode(StringNode& node);
 	RTResult Visit_BinOpNode(BinOpNode& node);
 	RTResult Visit_VarAccessNode(VarAccessNode& node);
 	RTResult Visit_VarAssignNode(VarAssignNode& node);

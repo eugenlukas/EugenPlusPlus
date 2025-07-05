@@ -55,7 +55,11 @@ int main()
 
         if (result.GetValue().has_value())
         {
-            std::cout << result.GetValue().value() << std::endl;
+            auto val = result.GetValue().value();
+            if (std::holds_alternative<double>(val))
+                std::cout << std::get<double>(val) << std::endl;
+            else if (std::holds_alternative<std::string>(val))
+                std::cout << std::get<std::string>(val) << std::endl;
         }
     }
 }

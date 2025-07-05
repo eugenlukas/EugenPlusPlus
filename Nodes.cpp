@@ -16,6 +16,22 @@ std::string NumberNode::Repr()
 	return token.Repr();
 }
 
+StringNode::StringNode()
+{}
+
+StringNode::StringNode(Token token)
+{
+	this->token = token;
+
+	posStart = token.GetPosStart();
+	posEnd = token.GetPosEnd();
+}
+
+std::string StringNode::Repr()
+{
+	return token.Repr();
+}
+
 BinOpNode::BinOpNode(std::shared_ptr<Node> leftNode, Token opToken, std::shared_ptr<Node> rightNode)
 {
 	this->leftNode = leftNode;

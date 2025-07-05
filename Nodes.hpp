@@ -42,6 +42,19 @@ private:
 	Token token;
 };
 
+class StringNode : public Node
+{
+public:
+	StringNode();
+	StringNode(Token token);
+
+	std::string Repr() override;
+	Token GetToken() { return token; };
+
+private:
+	Token token;
+};
+
 class VarAccessNode : public Node
 {
 public:

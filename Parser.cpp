@@ -199,6 +199,12 @@ ParseResult Parser::Atom()
 		res.RegisterAdvancement();
 		return res.Success(std::make_shared<NumberNode>(tok));
 	}
+	else if (tok.GetType() == TT_STRING)
+	{
+		Advance();
+		res.RegisterAdvancement();
+		return res.Success(std::make_shared<StringNode>(tok));
+	}
 	else if (tok.GetType() == TT_IDENTIFIER)
 	{
 		Advance();

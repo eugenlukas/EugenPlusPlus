@@ -69,4 +69,7 @@
   <ItemGroup>
     <Text Include="grammar.txt" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+  </ItemGroup>
 </Project>

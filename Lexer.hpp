@@ -34,6 +34,7 @@ public:
 
 private:
 	Token makeNumber();
+	Token makeString();
 	Token makeIdentifier();
 	Token makeMinusOrArrow();
 	MakeMethodeResult makeNotEquals();

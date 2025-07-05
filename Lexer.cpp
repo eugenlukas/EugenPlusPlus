@@ -1,5 +1,6 @@
 #include "Lexer.hpp"
 #include <string>
+#include <unordered_map>
 
 Lexer::Lexer(const std::string& fn, const std::string& text)
 {
@@ -43,6 +44,9 @@ MakeTokensResult Lexer::MakeTokens()
 			case '\t':
 				Advance();
 				break;
+				case '"':
+					tokens.push_back(makeString());
+					break;
 			case '+':
 				tokens.push_back(Token(TT_PLUS, std::nullopt, pos));
 				Advance();
@@ -133,6 +137,46 @@ Token Lexer::makeNumber()
 		return Token(TT_INT, std::stod(numStr), posStart, pos);
 	else
 		return Token(TT_FLOAT, std::stod(numStr), posStart, pos);
+}
+
+Token Lexer::makeString()
+{
+	std::string string = "";
+	Position posStart = pos.Copy();
+	bool escapeCharacter = false;
+	Advance();
+
+	std::unordered_map<char, std::string> escapeCharacters = {
+	{ 'n', "\n"},
+	{ 't', "\t"},
+	{ '"', "\""},
+	{ '\\', "\\"}
+	};
+
+	while (current_char != '\0' && (current_char != '"' || escapeCharacter))
+	{
+		if (escapeCharacter)
+		{
+			if (escapeCharacters.count(current_char))
+				string += escapeCharacters[current_char];
+			else
+				string += current_char;  // Unknown escape, keep as-is
+
+			escapeCharacter = false;
+		}
+		else
+		{
+			if (current_char == '\\')
+				escapeCharacter = true;
+			else
+				string += current_char;
+		}
+		Advance();
+	}
+
+	Advance();
+
+	return Token(TT_STRING, string, posStart, pos);
 }
 
 Token Lexer::makeIdentifier()

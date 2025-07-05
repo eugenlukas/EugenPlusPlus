@@ -5,6 +5,8 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
 {
     if (auto number = dynamic_cast<NumberNode*>(node.get()))
         return Visit_NumberNode(*number);
+    if (auto string = dynamic_cast<StringNode*>(node.get()))
+        return Visit_StringNode(*string);
     if (auto binOp = dynamic_cast<BinOpNode*>(node.get()))
         return Visit_BinOpNode(*binOp);
     if (auto unary = dynamic_cast<UnaryOpNode*>(node.get()))
@@ -40,6 +42,11 @@ RTResult Interpreter::Visit_NumberNode(NumberNode& node)
     return RTResult().Success(num);
 }
 
+RTResult Interpreter::Visit_StringNode(StringNode& node)
+{
+    return RTResult().Success(std::get<std::string>(node.GetToken().GetValue()));
+}
+
 RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
 {
     auto left = Visit(node.GetLeftNode());
@@ -50,44 +57,90 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
     if (right.HasError())
         return right;
 
-    double l = left.GetValue().value();
-    double r = right.GetValue().value();
+    auto l = left.GetValue().value();
+    auto r = right.GetValue().value();
 
     Position pos_start = node.GetOpToken().GetPosStart();
     Position pos_end = node.GetOpToken().GetPosEnd();
 
-    if (node.GetOpToken().GetType() == TT_PLUS)
-        return RTResult().Success(l + r);
-    else if (node.GetOpToken().GetType() == TT_MINUS)
-        return RTResult().Success(l - r);
-    else if (node.GetOpToken().GetType() == TT_MUL)
-        return RTResult().Success(l * r);
-    else if (node.GetOpToken().GetType() == TT_DIV)
+    if (node.GetOpToken().GetType() == TT_PLUS)  // Handle addition
     {
-        if (r == 0)
-            return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Division by zero"));
-        return RTResult().Success(l / r);
+        // String + String
+        if (std::holds_alternative<std::string>(l) && std::holds_alternative<std::string>(r))
+        {
+            std::string result = std::get<std::string>(l) + std::get<std::string>(r);
+            return RTResult().Success(result);
+        }
+        // Number + Number
+        else if (std::holds_alternative<double>(l) && std::holds_alternative<double>(r))
+        {
+            double result = std::get<double>(l) + std::get<double>(r);
+            return RTResult().Success(result);
+        }
     }
-    else if (node.GetOpToken().GetType() == TT_POW)
-        return RTResult().Success(pow(l, r));
-    else if (node.GetOpToken().GetType() == TT_EQEQ)
-        return RTResult().Success(l == r);
-    else if (node.GetOpToken().GetType() == TT_NEQ)
-        return RTResult().Success(l != r);
-    else if (node.GetOpToken().GetType() == TT_LT)
-        return RTResult().Success(l < r);
-    else if (node.GetOpToken().GetType() == TT_GT)
-        return RTResult().Success(l > r);
-    else if (node.GetOpToken().GetType() == TT_LTEQ)
-        return RTResult().Success(l <= r);
-    else if (node.GetOpToken().GetType() == TT_GTEQ)
-        return RTResult().Success(l >= r);
-    else if (node.GetOpToken().Matches(TT_KEYWORD, "AND"))
-        return RTResult().Success(l && r);
-    else if (node.GetOpToken().Matches(TT_KEYWORD, "OR"))
-        return RTResult().Success(l || r);
+    else if (node.GetOpToken().GetType() == TT_MUL)  // Handle multiplication
+    {
+        // String * Number
+        if (std::holds_alternative<std::string>(l) && std::holds_alternative<double>(r))
+        {
+            std::string str = std::get<std::string>(l);
+            int times = static_cast<int>(std::get<double>(r));
+            std::string result;
+            for (int i = 0; i < times; ++i)
+                result += str;
+            return RTResult().Success(result);
+        }
+        // Number * String
+        else if (std::holds_alternative<double>(l) && std::holds_alternative<std::string>(r))
+        {
+            int times = static_cast<int>(std::get<double>(l));
+            std::string str = std::get<std::string>(r);
+            std::string result;
+            for (int i = 0; i < times; ++i)
+                result += str;
+            return RTResult().Success(result);
+        }
+        // Number * Number
+        else if (std::holds_alternative<double>(l) && std::holds_alternative<double>(r))
+        {
+            double result = std::get<double>(l) * std::get<double>(r);
+            return RTResult().Success(result);
+        }
+    }
+    else if (std::holds_alternative<double>(l) && std::holds_alternative<double>(r))  // Other numeric operators (require numbers only)
+    {
+        double lNum = std::get<double>(l);
+        double rNum = std::get<double>(r);
 
-    return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Unknown binary operator"));
+        if (node.GetOpToken().GetType() == TT_MINUS)
+            return RTResult().Success(lNum - rNum);
+        else if (node.GetOpToken().GetType() == TT_DIV)
+        {
+            if (rNum == 0)
+                return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Division by zero"));
+            return RTResult().Success(lNum / rNum);
+        }
+        else if (node.GetOpToken().GetType() == TT_POW)
+            return RTResult().Success(pow(lNum, rNum));
+        else if (node.GetOpToken().GetType() == TT_EQEQ)
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum == rNum)));
+        else if (node.GetOpToken().GetType() == TT_NEQ)                                      
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum != rNum)));
+        else if (node.GetOpToken().GetType() == TT_LT)                                      
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum < rNum)));
+        else if (node.GetOpToken().GetType() == TT_GT)                                      
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum > rNum)));
+        else if (node.GetOpToken().GetType() == TT_LTEQ)                                    
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum <= rNum)));
+        else if (node.GetOpToken().GetType() == TT_GTEQ)                                   
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum >= rNum)));
+        else if (node.GetOpToken().Matches(TT_KEYWORD, "AND"))                             
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum && rNum)));
+        else if (node.GetOpToken().Matches(TT_KEYWORD, "OR"))                              
+            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum || rNum)));
+    }
+
+    return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Unsupported operand types for binary operation"));
 }
 
 RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
@@ -95,7 +148,7 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
     RTResult res_num = Visit(node.GetNode());
     if (res_num.HasError()) return res_num;
 
-    double num = res_num.GetValue().value();
+    double num = std::get<double>(res_num.GetValue().value());
     std::string op_type = node.GetOpToken().GetType();
 
     if (op_type == TT_MINUS)
@@ -103,7 +156,7 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
     if (op_type == TT_PLUS)
         return RTResult().Success(+num);
     if (node.GetOpToken().Matches(TT_KEYWORD, "NOT"))
-        return RTResult().Success(num == 0 ? 1 : 0);
+        return RTResult().Success(std::variant<double, std::string>(static_cast<double>(num == 0 ? 1 : 0)));
 
     return RTResult().Failure(
         std::make_unique<RuntimeError>(
@@ -144,7 +197,7 @@ RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
     if (res_value.HasError())
         return res_value;
 
-    symbolTable.Set(varName, res_value.GetValue().value());
+    symbolTable.Set(varName, std::get<double>(res_value.GetValue().value()));
     return res_value.Success(res_value.GetValue().value());
 }
 
@@ -158,7 +211,7 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
         if (conditionValue.HasError())
             return conditionValue;
 
-        if (conditionValue.GetValue().value() != 0)
+        if (std::get<double>(conditionValue.GetValue().value()) != 0)
         {
             RTResult exprValue = Visit(ifCase.GetExpr());
             if (exprValue.HasError())
@@ -200,16 +253,16 @@ RTResult Interpreter::Visit_ForNode(ForNode& node)
             return startValue;
     }
     else
-        stepValue.SetValue(1);
+        stepValue.SetValue(static_cast<double>(1));
 
     std::function<bool(int)> condition;
 
-    if (stepValue.GetValue().value() >= 0)
-        condition = [=](int i) { return i < endValue.GetValue().value(); };
+    if (std::get<double>(stepValue.GetValue().value()) >= 0)
+        condition = [=](int i) { return i < std::get<double>(endValue.GetValue().value()); };
     else
-        condition = [=](int i) { return i > endValue.GetValue().value(); };
+        condition = [=](int i) { return i > std::get<double>(endValue.GetValue().value()); };
 
-    for (int i = startValue.GetValue().value(); condition(i); i += stepValue.GetValue().value())
+    for (int i = std::get<double>(startValue.GetValue().value()); condition(i); i += std::get<double>(stepValue.GetValue().value()))
     {
         symbolTable.Set(std::get<std::string>(node.GetVarNameTok().GetValue()), static_cast<double>(i));
 
@@ -231,7 +284,7 @@ RTResult Interpreter::Visit_WhileNode(WhileNode& node)
         if (condition.HasError())
             return condition;
 
-        if (condition.GetValue() == 0)
+        if (std::get<double>(condition.GetValue().value()) == 0)
             break;
 
         res = Visit(node.GetBodyNode());
@@ -283,7 +336,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
         if (argRes.HasError()) return argRes;
 
         std::string argName = std::get<std::string>(funcNode.GetArgNameToks()[i].GetValue());
-        localSymbolTable.Set(argName, argRes.GetValue().value());
+        localSymbolTable.Set(argName, std::get<double>(argRes.GetValue().value()));
     }
 
     // Execute function body
@@ -294,7 +347,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
     return res.Success(result.GetValue());
 }
 
-RTResult& RTResult::Success(std::optional<double> value)
+RTResult& RTResult::Success(std::optional<std::variant<double, std::string>> value)
 {
     this->value = value;
     return *this;
