@@ -5,7 +5,7 @@
 #include "Error.hpp"
 #include <unordered_map>
 
-using SymbolValue = std::variant<double, FuncDefNode>;
+using SymbolValue = std::variant<double, std::string, FuncDefNode>;
 
 class SymbolTable
 {

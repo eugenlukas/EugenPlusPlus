@@ -175,18 +175,14 @@ RTResult Interpreter::Visit_VarAccessNode(VarAccessNode& node)
     auto value = symbolTable.Get(varName);
 
     if (!value.has_value())
-    {
         return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "'" + varName + "' is not defined"));
-    }
 
     if (std::holds_alternative<double>(value.value()))
-    {
         return res.Success(std::get<double>(value.value()));
-    }
+    else if (std::holds_alternative<std::string>(value.value()))
+        return res.Success(std::get<std::string>(value.value()));
     else
-    {
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Variable is not a number"));
-    }
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Variable is not a number or a string"));
 }
 
 RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
@@ -336,7 +332,12 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
         if (argRes.HasError()) return argRes;
 
         std::string argName = std::get<std::string>(funcNode.GetArgNameToks()[i].GetValue());
-        localSymbolTable.Set(argName, std::get<double>(argRes.GetValue().value()));
+        auto val = argRes.GetValue().value();
+
+        if (std::holds_alternative<double>(val))
+            localSymbolTable.Set(argName, std::get<double>(argRes.GetValue().value()));
+        else if (std::holds_alternative<std::string>(val))
+            localSymbolTable.Set(argName, std::get<std::string>(argRes.GetValue().value()));
     }
 
     // Execute function body
