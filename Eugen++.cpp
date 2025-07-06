@@ -5,6 +5,41 @@
 #include "Parser.hpp"
 #include "Interpreter.hpp"
 
+std::string print(RTResult result)
+{
+    if (result.GetValue().has_value())
+    {
+        auto val = result.GetValue().value();
+        if (std::holds_alternative<double>(val))                        // Print number
+        {
+            double number = std::get<double>(val);
+            if (number == static_cast<int>(number))                         // Print number as int
+                return std::to_string(static_cast<int>(number));
+            else                                                            // Print number as double
+                return std::to_string(std::get<double>(val));
+        }
+        else if (std::holds_alternative<std::string>(val))              // Print string
+            return (std::get<std::string>(val));
+        else if (std::holds_alternative<List>(val))                     // Print list
+        {
+            const auto& list = std::get<List>(val);
+            std::string result = "[";
+            for (size_t i = 0; i < list.elements.size(); ++i)
+            {
+                result += print(RTResult().Success(list.elements[i]));
+                if (i != list.elements.size() - 1)
+                {
+                    result += ", ";
+                }
+            }
+            result += "]";
+            return result;
+        }
+    }
+    else
+        return "";
+}
+
 int main()
 {
     SymbolTable globalSymbolTable = SymbolTable();
@@ -55,11 +90,7 @@ int main()
 
         if (result.GetValue().has_value())
         {
-            auto val = result.GetValue().value();
-            if (std::holds_alternative<double>(val))
-                std::cout << std::get<double>(val) << std::endl;
-            else if (std::holds_alternative<std::string>(val))
-                std::cout << std::get<std::string>(val) << std::endl;
+            std::cout << print(result) << std::endl;
         }
     }
 }

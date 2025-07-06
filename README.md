@@ -109,12 +109,31 @@ sub(70, 1)
 >this is a 
  string
 
- "this is a \\ string"
- >this is a \ string
+"this is a \\ string"
+>this is a \ string
 
- "this is a \" string"
- >this is a " string
+"this is a \" string"
+>this is a " string
 
- ("Hello " * 3) + "Paul"
- > Hello Hello Hello Paul
+("Hello " * 3) + "Paul"
+> Hello Hello Hello Paul
+~~~
+
+<h3>Lists</h3>
+
+~~~
+["name1", "name2", "name3"]
+>["name1", "name2", "name3"]
+
+["name1", "name2", "name3"] @ 1
+>"name1"
+
+["name1", "name2", "name3"] + 1
+>["name1", "name2", "name3", 1]
+
+["name1", "name2", "name3"] + [1,2]
+>["name1", "name2", "name3", [1, 2]]
+
+["name1", "name2", "name3"] * ["name4", "name5"]
+>["name1", "name2", "name3", "name4", "name5"]
 ~~~

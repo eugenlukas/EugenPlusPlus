@@ -25,6 +25,8 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
         return Visit_FuncDefNode(*funcDef);
     if (auto call = dynamic_cast<CallNode*>(node.get()))
         return Visit_CallNode(*call);
+    if (auto list = dynamic_cast<ListNode*>(node.get()))
+        return Visit_ListNode(*list);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
 }
@@ -45,6 +47,21 @@ RTResult Interpreter::Visit_NumberNode(NumberNode& node)
 RTResult Interpreter::Visit_StringNode(StringNode& node)
 {
     return RTResult().Success(std::get<std::string>(node.GetToken().GetValue()));
+}
+
+RTResult Interpreter::Visit_ListNode(ListNode& node)
+{
+    RTResult res;
+
+    std::vector<ListValue> elements;
+    for (auto elementNode : node.GetElementNodes())
+    {
+        auto result = Visit(elementNode);
+        if (result.HasError())
+            return result;
+        elements.push_back(result.GetValue().value());
+    }
+    return res.Success(List(elements));
 }
 
 RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
@@ -77,6 +94,14 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
             double result = std::get<double>(l) + std::get<double>(r);
             return RTResult().Success(result);
         }
+        //List + ListVar
+        else if (std::holds_alternative<List>(l))
+        {
+            List result(std::get<List>(l).elements);
+            result.elements.push_back(ListValue(r));
+            return RTResult().Success(result);
+        }
+
     }
     else if (node.GetOpToken().GetType() == TT_MUL)  // Handle multiplication
     {
@@ -106,6 +131,43 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
             double result = std::get<double>(l) * std::get<double>(r);
             return RTResult().Success(result);
         }
+        //List * List
+        else if (std::holds_alternative<List>(l) && std::holds_alternative<List>(r))
+        {
+            List result(std::get<List>(l).elements);
+
+            for (ListValue listVar : std::get<List>(r).elements)
+                result.elements.push_back(listVar);
+
+            return RTResult().Success(result);
+        }
+    }
+    else if (node.GetOpToken().GetType() == TT_AT)  // Handle list indexing with '@'
+    {
+        if (std::holds_alternative<List>(l) && std::holds_alternative<double>(r))
+        {
+            List listVal = std::get<List>(l);
+            int index = static_cast<int>(std::get<double>(r));
+
+            if (index < 0 || index >= listVal.elements.size())
+            {
+                return RTResult().Failure(
+                    std::make_unique<RuntimeError>(
+                        pos_start, pos_end, "Index out of bounds in list"
+                    )
+                );
+            }
+
+            return RTResult().Success(std::variant<double, std::string, List>(listVal.elements[index]));
+        }
+        else
+        {
+            return RTResult().Failure(
+                std::make_unique<RuntimeError>(
+                    pos_start, pos_end, "Invalid operands for list indexing"
+                )
+            );
+        }
     }
     else if (std::holds_alternative<double>(l) && std::holds_alternative<double>(r))  // Other numeric operators (require numbers only)
     {
@@ -123,21 +185,21 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
         else if (node.GetOpToken().GetType() == TT_POW)
             return RTResult().Success(pow(lNum, rNum));
         else if (node.GetOpToken().GetType() == TT_EQEQ)
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum == rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum == rNum)));
         else if (node.GetOpToken().GetType() == TT_NEQ)                                      
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum != rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum != rNum)));
         else if (node.GetOpToken().GetType() == TT_LT)                                      
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum < rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum < rNum)));
         else if (node.GetOpToken().GetType() == TT_GT)                                      
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum > rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum > rNum)));
         else if (node.GetOpToken().GetType() == TT_LTEQ)                                    
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum <= rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum <= rNum)));
         else if (node.GetOpToken().GetType() == TT_GTEQ)                                   
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum >= rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum >= rNum)));
         else if (node.GetOpToken().Matches(TT_KEYWORD, "AND"))                             
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum && rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum && rNum)));
         else if (node.GetOpToken().Matches(TT_KEYWORD, "OR"))                              
-            return RTResult().Success(std::variant<double, std::string>(static_cast<double>(lNum || rNum)));
+            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum || rNum)));
     }
 
     return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Unsupported operand types for binary operation"));
@@ -156,7 +218,7 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
     if (op_type == TT_PLUS)
         return RTResult().Success(+num);
     if (node.GetOpToken().Matches(TT_KEYWORD, "NOT"))
-        return RTResult().Success(std::variant<double, std::string>(static_cast<double>(num == 0 ? 1 : 0)));
+        return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(num == 0 ? 1 : 0)));
 
     return RTResult().Failure(
         std::make_unique<RuntimeError>(
@@ -181,8 +243,10 @@ RTResult Interpreter::Visit_VarAccessNode(VarAccessNode& node)
         return res.Success(std::get<double>(value.value()));
     else if (std::holds_alternative<std::string>(value.value()))
         return res.Success(std::get<std::string>(value.value()));
+    else if (std::holds_alternative<List>(value.value()))
+        return res.Success(std::get<List>(value.value()));
     else
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Variable is not a number or a string"));
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Variable is not a number, a string or a List"));
 }
 
 RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
@@ -193,7 +257,13 @@ RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
     if (res_value.HasError())
         return res_value;
 
-    symbolTable.Set(varName, std::get<double>(res_value.GetValue().value()));
+    if (std::holds_alternative<double>(res_value.GetValue().value()))
+        symbolTable.Set(varName, std::get<double>(res_value.GetValue().value()));
+    else if (std::holds_alternative<std::string>(res_value.GetValue().value()))
+        symbolTable.Set(varName, std::get<std::string>(res_value.GetValue().value()));
+    else if (std::holds_alternative<List>(res_value.GetValue().value()))
+        symbolTable.Set(varName, std::get<List>(res_value.GetValue().value()));
+
     return res_value.Success(res_value.GetValue().value());
 }
 
@@ -348,7 +418,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
     return res.Success(result.GetValue());
 }
 
-RTResult& RTResult::Success(std::optional<std::variant<double, std::string>> value)
+RTResult& RTResult::Success(std::optional<std::variant<double, std::string, List>> value)
 {
     this->value = value;
     return *this;

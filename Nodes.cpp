@@ -190,3 +190,28 @@ std::string CallNode::Repr()
 {
 	return std::string();
 }
+
+ListNode::ListNode()
+{}
+
+ListNode::ListNode(std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd)
+{
+	this->elementNodes = elementNodes;
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+}
+
+std::string ListNode::Repr()
+{
+	std::string result = "[";
+	for (size_t i = 0; i < elementNodes.size(); ++i)
+	{
+		result += elementNodes[i] ? elementNodes[i]->Repr() : "null";
+		if (i != elementNodes.size() - 1)
+		{
+			result += ", ";
+		}
+	}
+	result += "]";
+	return result;
+}

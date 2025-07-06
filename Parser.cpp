@@ -64,7 +64,7 @@ ParseResult Parser::Expr()
 	if (res.HasError())
 	{
 		if (res.GetAdvancementCount() == 0 && !res.GetErrorPtr())
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(),"Expected int, float, identifier, VAR, '+', '-', '(', 'IF', 'FOR', 'WHILE', 'FUNC'"));
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(),"Expected int, float, identifier, VAR, '+', '-', '(', '[', 'IF', 'FOR', 'WHILE', 'FUNC' or NOT"));
 		return res;
 	}
 
@@ -96,7 +96,7 @@ ParseResult Parser::CompExpr()
 	if (res.HasError())
 	{
 		if (res.GetAdvancementCount() == 0 && !res.GetErrorPtr())
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(' or 'NOT'"));
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(', '[' or 'NOT'"));
 		return res;
 	}
 
@@ -105,7 +105,7 @@ ParseResult Parser::CompExpr()
 
 ParseResult Parser::ArithExpr()
 {
-	std::vector<std::string> ops = { TT_PLUS, TT_MINUS };
+	std::vector<std::string> ops = { TT_PLUS, TT_MINUS, TT_AT };
 	return BinOp([this]() {return Term(); }, ops);
 }
 
@@ -163,7 +163,7 @@ ParseResult Parser::Call()
 		{
 			argNodes.push_back(res.Register(Expr()));
 			if (res.HasError())
-				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')', 'VAR', 'IF', 'FOR', 'WHILE', 'FUNC', 'int', 'float', identifier, '+', '-', '(' or 'NOT'"));
+				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')', 'VAR', 'IF', 'FOR', 'WHILE', 'FUNC', 'int', 'float', identifier, '+', '-', '(', '[' or 'NOT'"));
 
 			while (currentToken.GetType() == TT_COMMA)
 			{
@@ -227,6 +227,14 @@ ParseResult Parser::Atom()
 		else
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')'"));
 	}
+	else if (tok.GetType() == TT_LSQUARE)
+	{
+		std::shared_ptr<Node> listExpr = res.Register(ListExpr());
+		if (res.HasError())
+			return res;
+
+		return res.Success(listExpr);
+	}
 	else if (tok.Matches(TT_KEYWORD, "IF"))
 	{
 		std::shared_ptr<Node> ifExpr = res.Register(IfExpr());
@@ -256,7 +264,50 @@ ParseResult Parser::Atom()
 		return res.Success(funcDef);
 	}
 
-	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-', '(', 'IF', 'FOR', 'WHILE', 'FUNC'"));
+	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-', '(', '[', 'IF', 'FOR', 'WHILE', 'FUNC'"));
+}
+
+ParseResult Parser::ListExpr()
+{
+	ParseResult res;
+	std::vector<std::shared_ptr<Node>> elementNodes;
+	Position posStart = currentToken.GetPosStart().Copy();
+
+	if (currentToken.GetType() != TT_LSQUARE)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '['"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() == TT_RSQUARE)
+	{
+		Advance();
+		res.RegisterAdvancement();
+	}
+	else
+	{
+		elementNodes.push_back(res.Register(Expr()));
+		if (res.HasError())
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']', 'VAR', 'IF', 'FOR', 'WHILE', 'FUNC', 'int', 'float', identifier, '+', '-', '(', '[' or 'NOT'"));
+
+		while (currentToken.GetType() == TT_COMMA)
+		{
+			Advance();
+			res.RegisterAdvancement();
+
+			elementNodes.push_back(res.Register(Expr()));
+			if (res.HasError())
+				return res;
+		}
+
+		if (currentToken.GetType() != TT_RSQUARE)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ',' or ']'"));
+
+		Advance();
+		res.RegisterAdvancement();
+	}
+
+	return res.Success(std::make_unique<ListNode>(elementNodes, posStart, currentToken.GetPosEnd().Copy()));
 }
 
 ParseResult Parser::IfExpr()

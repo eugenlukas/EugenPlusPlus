@@ -74,6 +74,14 @@ MakeTokensResult Lexer::MakeTokens()
 				tokens.push_back(Token(TT_RPAREN, std::nullopt, pos));
 				Advance();
 				break;
+			case '[':
+				tokens.push_back(Token(TT_LSQUARE, std::nullopt, pos));
+				Advance();
+				break;
+			case ']':
+				tokens.push_back(Token(TT_RSQUARE, std::nullopt, pos));
+				Advance();
+				break;
 			case '!':
 			{
 				MakeMethodeResult res = makeNotEquals();
@@ -94,6 +102,10 @@ MakeTokensResult Lexer::MakeTokens()
 				break;
 			case ',':
 				tokens.push_back(Token(TT_COMMA, std::nullopt, pos));
+				Advance();
+				break;
+			case '@':
+				tokens.push_back(Token(TT_AT, std::nullopt, pos));
 				Advance();
 				break;
 			default:

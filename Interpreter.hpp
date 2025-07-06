@@ -5,7 +5,17 @@
 #include "Error.hpp"
 #include <unordered_map>
 
-using SymbolValue = std::variant<double, std::string, FuncDefNode>;
+struct List;
+using ListValue = std::variant<double, std::string, List>;
+
+struct List
+{
+	std::vector<ListValue> elements;
+
+	List(std::vector<ListValue> elements) : elements(elements) {}
+};
+
+using SymbolValue = std::variant<double, std::string, FuncDefNode, List>;
 
 class SymbolTable
 {
@@ -63,19 +73,19 @@ public:
 		}
 		return *this;
 	}
-	RTResult& Success(std::optional<std::variant<double, std::string>> value);
+	RTResult& Success(std::optional<std::variant<double, std::string, List>> value);
 	RTResult& Failure(std::unique_ptr<Error> error);
 
 	bool HasError() const { return error != nullptr; }
 
-	std::optional<std::variant<double, std::string>> GetValue() const { return value; }
+	std::optional<std::variant<double, std::string, List>> GetValue() const { return value; }
 	std::string GetError() const { return error->AsString(); }
 
-	void SetValue(std::optional<std::variant<double, std::string>> v) { value = v; }
+	void SetValue(std::optional<std::variant<double, std::string, List>> v) { value = v; }
 
 private:
 	std::unique_ptr<Error> error = nullptr;
-	std::optional<std::variant<double, std::string>> value = std::nullopt;
+	std::optional<std::variant<double, std::string, List>> value = std::nullopt;
 };
 
 class Interpreter
@@ -90,6 +100,7 @@ private:
 
 	RTResult Visit_NumberNode(NumberNode& node);
 	RTResult Visit_StringNode(StringNode& node);
+	RTResult Visit_ListNode(ListNode& node);
 	RTResult Visit_BinOpNode(BinOpNode& node);
 	RTResult Visit_VarAccessNode(VarAccessNode& node);
 	RTResult Visit_VarAssignNode(VarAssignNode& node);

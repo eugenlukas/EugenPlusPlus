@@ -19,6 +19,8 @@ constexpr char TT_POW[]			= "POW";
 constexpr char TT_EQ[]			= "EQ";
 constexpr char TT_LPAREN[]		= "LPAREN";
 constexpr char TT_RPAREN[]		= "RPAREN";
+constexpr char TT_LSQUARE[]		= "LSQUARE";
+constexpr char TT_RSQUARE[]		= "RSQUARE";
 constexpr char TT_EQEQ[]		= "EQEQ";
 constexpr char TT_NEQ[]			= "NEQ";
 constexpr char TT_LT[]			= "LT";
@@ -26,6 +28,7 @@ constexpr char TT_GT[]			= "GT";
 constexpr char TT_LTEQ[]		= "LTEQ";
 constexpr char TT_GTEQ[]		= "GTEQ";
 constexpr char TT_COMMA[]		= "COMMA";
+constexpr char TT_AT[]			= "AT";
 constexpr char TT_ARROW[]		= "ARROW";
 constexpr char TT_EOF[]			= "EOF";
 

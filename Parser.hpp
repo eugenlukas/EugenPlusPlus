@@ -71,6 +71,7 @@ public:
 	ParseResult Power();
 	ParseResult Call();
 	ParseResult Atom();
+	ParseResult ListExpr();
 	ParseResult IfExpr();
 	ParseResult ForExpr();
 	ParseResult WhileExpr();

@@ -55,6 +55,19 @@ private:
 	Token token;
 };
 
+class ListNode : public Node 
+{
+public:
+	ListNode();
+	ListNode(std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd);
+
+	std::string Repr() override;
+	std::vector<std::shared_ptr<Node>> GetElementNodes() { return elementNodes; }
+
+private:
+	std::vector<std::shared_ptr<Node>> elementNodes;
+};
+
 class VarAccessNode : public Node
 {
 public:
