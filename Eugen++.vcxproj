@@ -139,6 +139,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="BuildInFunctions.cpp" />
     <ClCompile Include="Error.cpp" />
     <ClCompile Include="Eugen++.cpp" />
     <ClCompile Include="Interpreter.cpp" />
@@ -149,6 +150,7 @@
     <ClCompile Include="Token.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="BuildInFunctions.hpp" />
     <ClInclude Include="Error.hpp" />
     <ClInclude Include="Helper.hpp" />
     <ClInclude Include="Interpreter.hpp" />

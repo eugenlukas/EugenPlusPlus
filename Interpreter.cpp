@@ -61,7 +61,7 @@ RTResult Interpreter::Visit_ListNode(ListNode& node)
             return result;
         elements.push_back(result.GetValue().value());
     }
-    return res.Success(List(elements));
+    return res.Success(std::make_shared<List>(List(elements)));
 }
 
 RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
@@ -95,11 +95,11 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
             return RTResult().Success(result);
         }
         //List + ListVar
-        else if (std::holds_alternative<List>(l))
+        else if (std::holds_alternative<std::shared_ptr<List>>(l))
         {
-            List result(std::get<List>(l).elements);
+            List result(std::get<std::shared_ptr<List>>(l)->elements);
             result.elements.push_back(ListValue(r));
-            return RTResult().Success(result);
+            return RTResult().Success(std::make_shared<List>(result));
         }
 
     }
@@ -132,24 +132,24 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
             return RTResult().Success(result);
         }
         //List * List
-        else if (std::holds_alternative<List>(l) && std::holds_alternative<List>(r))
+        else if (std::holds_alternative<std::shared_ptr<List>>(l) && std::holds_alternative<std::shared_ptr<List>>(r))
         {
-            List result(std::get<List>(l).elements);
+            List result(std::get<std::shared_ptr<List>>(l)->elements);
 
-            for (ListValue listVar : std::get<List>(r).elements)
+            for (ListValue listVar : std::get<std::shared_ptr<List>>(r)->elements)
                 result.elements.push_back(listVar);
 
-            return RTResult().Success(result);
+            return RTResult().Success(std::make_shared<List>(result));
         }
     }
     else if (node.GetOpToken().GetType() == TT_AT)  // Handle list indexing with '@'
     {
-        if (std::holds_alternative<List>(l) && std::holds_alternative<double>(r))
+        if (std::holds_alternative<std::shared_ptr<List>>(l) && std::holds_alternative<double>(r))
         {
-            List listVal = std::get<List>(l);
+            auto listVal = std::get<std::shared_ptr<List>>(l);
             int index = static_cast<int>(std::get<double>(r));
 
-            if (index < 0 || index >= listVal.elements.size())
+            if (index < 0 || index >= listVal->elements.size())
             {
                 return RTResult().Failure(
                     std::make_unique<RuntimeError>(
@@ -158,7 +158,7 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
                 );
             }
 
-            return RTResult().Success(std::variant<double, std::string, List>(listVal.elements[index]));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(listVal->elements[index]));
         }
         else
         {
@@ -185,21 +185,27 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
         else if (node.GetOpToken().GetType() == TT_POW)
             return RTResult().Success(pow(lNum, rNum));
         else if (node.GetOpToken().GetType() == TT_EQEQ)
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum == rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum == rNum)));
         else if (node.GetOpToken().GetType() == TT_NEQ)                                      
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum != rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum != rNum)));
         else if (node.GetOpToken().GetType() == TT_LT)                                      
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum < rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum < rNum)));
         else if (node.GetOpToken().GetType() == TT_GT)                                      
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum > rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum > rNum)));
         else if (node.GetOpToken().GetType() == TT_LTEQ)                                    
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum <= rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum <= rNum)));
         else if (node.GetOpToken().GetType() == TT_GTEQ)                                   
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum >= rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum >= rNum)));
         else if (node.GetOpToken().Matches(TT_KEYWORD, "AND"))                             
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum && rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum && rNum)));
         else if (node.GetOpToken().Matches(TT_KEYWORD, "OR"))                              
-            return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(lNum || rNum)));
+            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum || rNum)));
+    }
+    else if (std::holds_alternative<std::shared_ptr<List>>(l) && std::holds_alternative<double>(r))
+    {
+        List result(std::get<std::shared_ptr<List>>(l)->elements);
+        result.elements.erase(result.elements.begin() + std::get<double>(r));
+        return RTResult().Success(std::make_shared<List>(result));
     }
 
     return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Unsupported operand types for binary operation"));
@@ -218,7 +224,7 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
     if (op_type == TT_PLUS)
         return RTResult().Success(+num);
     if (node.GetOpToken().Matches(TT_KEYWORD, "NOT"))
-        return RTResult().Success(std::variant<double, std::string, List>(static_cast<double>(num == 0 ? 1 : 0)));
+        return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(num == 0 ? 1 : 0)));
 
     return RTResult().Failure(
         std::make_unique<RuntimeError>(
@@ -243,10 +249,14 @@ RTResult Interpreter::Visit_VarAccessNode(VarAccessNode& node)
         return res.Success(std::get<double>(value.value()));
     else if (std::holds_alternative<std::string>(value.value()))
         return res.Success(std::get<std::string>(value.value()));
-    else if (std::holds_alternative<List>(value.value()))
-        return res.Success(std::get<List>(value.value()));
+    else if (std::holds_alternative<std::shared_ptr<List>>(value.value()))
+        return res.Success(std::get<std::shared_ptr<List>>(value.value()));
+    else if (std::holds_alternative<std::shared_ptr<BaseFunction>>(value.value()))
+        return res.Success(std::get<std::shared_ptr<BaseFunction>>(value.value()));
+    else if (std::holds_alternative<std::shared_ptr<FuncDefNode>>(value.value()))
+        return res.Success(std::get<std::shared_ptr<FuncDefNode>>(value.value()));
     else
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Variable is not a number, a string or a List"));
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Variable is not a number, a string, a List or a Function"));
 }
 
 RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
@@ -261,8 +271,8 @@ RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
         symbolTable.Set(varName, std::get<double>(res_value.GetValue().value()));
     else if (std::holds_alternative<std::string>(res_value.GetValue().value()))
         symbolTable.Set(varName, std::get<std::string>(res_value.GetValue().value()));
-    else if (std::holds_alternative<List>(res_value.GetValue().value()))
-        symbolTable.Set(varName, std::get<List>(res_value.GetValue().value()));
+    else if (std::holds_alternative<std::shared_ptr<List>>(res_value.GetValue().value()))
+        symbolTable.Set(varName, std::get<std::shared_ptr<List>>(res_value.GetValue().value()));
 
     return res_value.Success(res_value.GetValue().value());
 }
@@ -368,7 +378,7 @@ RTResult Interpreter::Visit_FuncDefNode(FuncDefNode& node)
     if (node.GetVarNameTok().has_value())
     {
         std::string funcName = std::get<std::string>(node.GetVarNameTok().value().GetValue());
-        symbolTable.Set(funcName, node);
+        symbolTable.Set(funcName, std::make_shared<FuncDefNode>(node));
     }
 
     return res.Success(std::nullopt);
@@ -384,41 +394,78 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
         return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Invalid function name"));
 
     auto funcValue = symbolTable.Get(funcName);
-    if (!funcValue.has_value() || !std::holds_alternative<FuncDefNode>(funcValue.value()))
+    if (!funcValue.has_value())
         return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Function '" + funcName + "' not found"));
 
-    FuncDefNode funcNode = std::get<FuncDefNode>(funcValue.value());
-
-    if (node.GetArgNodes().size() != funcNode.GetArgNameToks().size())
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Incorrect number of arguments"));
-
-    // Save current symbol table
-    SymbolTable localSymbolTable(&symbolTable);
-
-    // Assign arguments
-    for (size_t i = 0; i < node.GetArgNodes().size(); ++i)
+    // Handle user-defined functions
+    if (std::holds_alternative<std::shared_ptr<FuncDefNode>>(funcValue.value()))
     {
-        auto argRes = Visit(node.GetArgNodes()[i]);
-        if (argRes.HasError()) return argRes;
+        auto funcNodePtr = std::get<std::shared_ptr<FuncDefNode>>(funcValue.value());
 
-        std::string argName = std::get<std::string>(funcNode.GetArgNameToks()[i].GetValue());
-        auto val = argRes.GetValue().value();
+        if (node.GetArgNodes().size() != funcNodePtr->GetArgNameToks().size())
+            return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Incorrect number of arguments"));
 
-        if (std::holds_alternative<double>(val))
-            localSymbolTable.Set(argName, std::get<double>(argRes.GetValue().value()));
-        else if (std::holds_alternative<std::string>(val))
-            localSymbolTable.Set(argName, std::get<std::string>(argRes.GetValue().value()));
+        // Save current symbol table
+        SymbolTable localSymbolTable(&symbolTable);
+
+        // Assign arguments
+        for (size_t i = 0; i < node.GetArgNodes().size(); ++i)
+        {
+            auto argRes = Visit(node.GetArgNodes()[i]);
+            if (argRes.HasError()) return argRes;
+
+            std::string argName = std::get<std::string>(funcNodePtr->GetArgNameToks()[i].GetValue());
+            auto argResVal = argRes.GetValue().value();
+
+            if (std::holds_alternative<double>(argResVal))
+                localSymbolTable.Set(argName, std::get<double>(argResVal));
+            else if (std::holds_alternative<std::string>(argResVal))
+                localSymbolTable.Set(argName, std::get<std::string>(argResVal));
+            else if (std::holds_alternative<std::shared_ptr<List>>(argResVal))
+                localSymbolTable.Set(argName, std::get<std::shared_ptr<List>>(argResVal));
+        }
+
+        // Execute function body
+        Interpreter funcInterpreter(localSymbolTable);
+        auto result = funcInterpreter.Visit(funcNodePtr->GetBodyNode());
+        if (result.HasError()) return result;
+
+        return res.Success(result.GetValue());
     }
+    // Handle built-in functions
+    else if (std::holds_alternative<std::shared_ptr<BaseFunction>>(funcValue.value()))
+    {
+        auto func = std::get<std::shared_ptr<BaseFunction>>(funcValue.value());
 
-    // Execute function body
-    Interpreter funcInterpreter(localSymbolTable);
-    auto result = funcInterpreter.Visit(funcNode.GetBodyNode());
-    if (result.HasError()) return result;
+        std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args;
+        for (auto& argNode : node.GetArgNodes())
+        {
+            auto argRes = Visit(argNode);
+            if (argRes.HasError()) return argRes;
 
-    return res.Success(result.GetValue());
+            auto val = argRes.GetValue().value();
+            if (std::holds_alternative<double>(val) || std::holds_alternative<std::string>(val) || std::holds_alternative<std::shared_ptr<List>>(val) || std::holds_alternative<std::shared_ptr<BaseFunction>>(val) || std::holds_alternative<std::shared_ptr<FuncDefNode>>(val))
+            {
+                args.push_back(val);
+            }
+            else
+            {
+                return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Unsupported argument type for built-in function"));
+            }
+        }
+
+        auto result = func->Execute(args);
+        if (result.HasError()) return result;
+
+        return res.Success(result.GetValue());
+    }
+    else
+    {
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Function '" + funcName + "' not callable"));
+    }
 }
 
-RTResult& RTResult::Success(std::optional<std::variant<double, std::string, List>> value)
+RTResult& RTResult::Success(std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> value)
 {
     this->value = value;
     return *this;

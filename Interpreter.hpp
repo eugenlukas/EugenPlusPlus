@@ -4,9 +4,12 @@
 #include "Token.hpp"
 #include "Error.hpp"
 #include <unordered_map>
+#include "BuildInFunctions.hpp"
 
 struct List;
-using ListValue = std::variant<double, std::string, List>;
+class BaseFunction;
+using ListValue = std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>;
+using SymbolValue = std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>;
 
 struct List
 {
@@ -14,8 +17,6 @@ struct List
 
 	List(std::vector<ListValue> elements) : elements(elements) {}
 };
-
-using SymbolValue = std::variant<double, std::string, FuncDefNode, List>;
 
 class SymbolTable
 {
@@ -73,19 +74,19 @@ public:
 		}
 		return *this;
 	}
-	RTResult& Success(std::optional<std::variant<double, std::string, List>> value);
+	RTResult& Success(std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> value);
 	RTResult& Failure(std::unique_ptr<Error> error);
 
 	bool HasError() const { return error != nullptr; }
 
-	std::optional<std::variant<double, std::string, List>> GetValue() const { return value; }
+	std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> GetValue() const { return value; }
 	std::string GetError() const { return error->AsString(); }
 
-	void SetValue(std::optional<std::variant<double, std::string, List>> v) { value = v; }
+	void SetValue(std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> v) { value = v; }
 
 private:
 	std::unique_ptr<Error> error = nullptr;
-	std::optional<std::variant<double, std::string, List>> value = std::nullopt;
+	std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> value = std::nullopt;
 };
 
 class Interpreter

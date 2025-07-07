@@ -126,7 +126,7 @@ ForNode::ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::sh
 	this->varNameTok = varNameTok;
 	this->startValueNode = startValueNode;
 	this->endValueNode = endValueNode;
-	this->startValueNode = startValueNode;
+	this->stepValueNode = stepValueNode;
 	this->bodyNode = bodyNode;
 
 	posStart = varNameTok.GetPosStart();

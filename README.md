@@ -134,6 +134,9 @@ sub(70, 1)
 ["name1", "name2", "name3"] + [1,2]
 >["name1", "name2", "name3", [1, 2]]
 
+[10, 20, 30] - 2
+>[10, 30]
+
 ["name1", "name2", "name3"] * ["name4", "name5"]
 >["name1", "name2", "name3", "name4", "name5"]
 ~~~

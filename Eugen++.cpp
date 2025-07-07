@@ -5,47 +5,25 @@
 #include "Parser.hpp"
 #include "Interpreter.hpp"
 
-std::string print(RTResult result)
-{
-    if (result.GetValue().has_value())
-    {
-        auto val = result.GetValue().value();
-        if (std::holds_alternative<double>(val))                        // Print number
-        {
-            double number = std::get<double>(val);
-            if (number == static_cast<int>(number))                         // Print number as int
-                return std::to_string(static_cast<int>(number));
-            else                                                            // Print number as double
-                return std::to_string(std::get<double>(val));
-        }
-        else if (std::holds_alternative<std::string>(val))              // Print string
-            return (std::get<std::string>(val));
-        else if (std::holds_alternative<List>(val))                     // Print list
-        {
-            const auto& list = std::get<List>(val);
-            std::string result = "[";
-            for (size_t i = 0; i < list.elements.size(); ++i)
-            {
-                result += print(RTResult().Success(list.elements[i]));
-                if (i != list.elements.size() - 1)
-                {
-                    result += ", ";
-                }
-            }
-            result += "]";
-            return result;
-        }
-    }
-    else
-        return "";
-}
-
 int main()
 {
     SymbolTable globalSymbolTable = SymbolTable();
     globalSymbolTable.Set("NULL", static_cast<double>(0));
     globalSymbolTable.Set("TRUE", static_cast<double>(1));
     globalSymbolTable.Set("FALSE", static_cast<double>(0));
+    globalSymbolTable.Set("MATH_PI", static_cast<double>(3.141592653589793));
+    globalSymbolTable.Set("PRINT", std::make_shared<PrintFunction>());
+    globalSymbolTable.Set("LENGTH", std::make_shared<LengthFunction>());
+    globalSymbolTable.Set("INPUT_STR", std::make_shared<InputStr>());
+    globalSymbolTable.Set("INPUT_NUM", std::make_shared<InputNum>());
+    globalSymbolTable.Set("IS_NUM", std::make_shared<IsNum>());
+    globalSymbolTable.Set("IS_STR", std::make_shared<IsStr>());
+    globalSymbolTable.Set("IS_LIST", std::make_shared<IsList>());
+    globalSymbolTable.Set("IS_FUNC", std::make_shared<IsFunc>());
+    globalSymbolTable.Set("APPEND", std::make_shared<Append>());
+    globalSymbolTable.Set("POP", std::make_shared<Pop>());
+    globalSymbolTable.Set("EXTEND", std::make_shared<Extend>());
+    globalSymbolTable.Set("CLEAR", std::make_shared<Clear>());
 
     while (true)
     {
@@ -90,7 +68,7 @@ int main()
 
         if (result.GetValue().has_value())
         {
-            std::cout << print(result) << std::endl;
+            std::cout << Helper::Print(result) << std::endl;
         }
     }
 }
