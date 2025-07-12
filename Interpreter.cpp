@@ -158,7 +158,7 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
                 );
             }
 
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(listVal->elements[index]));
+            return RTResult().Success(ListValue(listVal->elements[index]));
         }
         else
         {
@@ -185,25 +185,30 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
         else if (node.GetOpToken().GetType() == TT_POW)
             return RTResult().Success(pow(lNum, rNum));
         else if (node.GetOpToken().GetType() == TT_EQEQ)
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum == rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum == rNum)));
         else if (node.GetOpToken().GetType() == TT_NEQ)                                      
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum != rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum != rNum)));
         else if (node.GetOpToken().GetType() == TT_LT)                                      
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum < rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum < rNum)));
         else if (node.GetOpToken().GetType() == TT_GT)                                      
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum > rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum > rNum)));
         else if (node.GetOpToken().GetType() == TT_LTEQ)                                    
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum <= rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum <= rNum)));
         else if (node.GetOpToken().GetType() == TT_GTEQ)                                   
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum >= rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum >= rNum)));
         else if (node.GetOpToken().Matches(TT_KEYWORD, "AND"))                             
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum && rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum && rNum)));
         else if (node.GetOpToken().Matches(TT_KEYWORD, "OR"))                              
-            return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(lNum || rNum)));
+            return RTResult().Success(SymbolValue(static_cast<double>(lNum || rNum)));
     }
     else if (std::holds_alternative<std::shared_ptr<List>>(l) && std::holds_alternative<double>(r))
     {
+        int index = static_cast<int>(std::get<double>(r));
         List result(std::get<std::shared_ptr<List>>(l)->elements);
+
+        if (index < 0 || index >= result.elements.size())
+            return RTResult().Failure(std::make_unique<RuntimeError>(pos_start, pos_end, "Index out of bounce in list deletion"));
+
         result.elements.erase(result.elements.begin() + std::get<double>(r));
         return RTResult().Success(std::make_shared<List>(result));
     }
@@ -224,7 +229,7 @@ RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
     if (op_type == TT_PLUS)
         return RTResult().Success(+num);
     if (node.GetOpToken().Matches(TT_KEYWORD, "NOT"))
-        return RTResult().Success(std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>(static_cast<double>(num == 0 ? 1 : 0)));
+        return RTResult().Success(SymbolValue(static_cast<double>(num == 0 ? 1 : 0)));
 
     return RTResult().Failure(
         std::make_unique<RuntimeError>(
@@ -293,6 +298,9 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
             if (exprValue.HasError())
                 return exprValue;
 
+            if (exprValue.GetValue().has_value() == false)
+                return res.Success(std::nullopt);
+
             return res.Success(exprValue.GetValue().value());
         }
     }
@@ -302,6 +310,9 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
         RTResult elseValue = Visit(node.GetElseCase());
         if (elseValue.HasError())
             return elseValue;
+
+        if (elseValue.GetValue().has_value() == false)
+            return res.Success(std::nullopt);
 
         return res.Success(elseValue.GetValue().value());
     }
@@ -437,7 +448,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
     {
         auto func = std::get<std::shared_ptr<BaseFunction>>(funcValue.value());
 
-        std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args;
+        std::vector<SymbolValue> args;
         for (auto& argNode : node.GetArgNodes())
         {
             auto argRes = Visit(argNode);
@@ -465,7 +476,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
     }
 }
 
-RTResult& RTResult::Success(std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> value)
+RTResult& RTResult::Success(std::optional<SymbolValue> value)
 {
     this->value = value;
     return *this;

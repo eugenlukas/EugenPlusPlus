@@ -12,18 +12,18 @@ int main()
     globalSymbolTable.Set("TRUE", static_cast<double>(1));
     globalSymbolTable.Set("FALSE", static_cast<double>(0));
     globalSymbolTable.Set("MATH_PI", static_cast<double>(3.141592653589793));
-    globalSymbolTable.Set("PRINT", std::make_shared<PrintFunction>());
-    globalSymbolTable.Set("LENGTH", std::make_shared<LengthFunction>());
-    globalSymbolTable.Set("INPUT_STR", std::make_shared<InputStr>());
-    globalSymbolTable.Set("INPUT_NUM", std::make_shared<InputNum>());
-    globalSymbolTable.Set("IS_NUM", std::make_shared<IsNum>());
-    globalSymbolTable.Set("IS_STR", std::make_shared<IsStr>());
-    globalSymbolTable.Set("IS_LIST", std::make_shared<IsList>());
-    globalSymbolTable.Set("IS_FUNC", std::make_shared<IsFunc>());
-    globalSymbolTable.Set("APPEND", std::make_shared<Append>());
-    globalSymbolTable.Set("POP", std::make_shared<Pop>());
-    globalSymbolTable.Set("EXTEND", std::make_shared<Extend>());
-    globalSymbolTable.Set("CLEAR", std::make_shared<Clear>());
+    globalSymbolTable.Set("PRINT", std::make_shared<NativePrintFunction>());
+    globalSymbolTable.Set("LENGTH", std::make_shared<NativeLengthFunction>());
+    globalSymbolTable.Set("INPUT_STR", std::make_shared<NativeInputStr>());
+    globalSymbolTable.Set("INPUT_NUM", std::make_shared<NativeInputNum>());
+    globalSymbolTable.Set("IS_NUM", std::make_shared<NativeIsNum>());
+    globalSymbolTable.Set("IS_STR", std::make_shared<NativeIsStr>());
+    globalSymbolTable.Set("IS_LIST", std::make_shared<NativeIsList>());
+    globalSymbolTable.Set("IS_FUNC", std::make_shared<NativeIsFunc>());
+    globalSymbolTable.Set("APPEND", std::make_shared<NativeAppend>());
+    globalSymbolTable.Set("POP", std::make_shared<NativePop>());
+    globalSymbolTable.Set("EXTEND", std::make_shared<NativeExtend>());
+    globalSymbolTable.Set("CLEAR", std::make_shared<NativeClear>());
 
     while (true)
     {

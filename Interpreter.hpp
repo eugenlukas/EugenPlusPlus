@@ -74,19 +74,19 @@ public:
 		}
 		return *this;
 	}
-	RTResult& Success(std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> value);
+	RTResult& Success(std::optional<SymbolValue> value);
 	RTResult& Failure(std::unique_ptr<Error> error);
 
 	bool HasError() const { return error != nullptr; }
 
-	std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> GetValue() const { return value; }
+	std::optional<SymbolValue> GetValue() const { return value; }
 	std::string GetError() const { return error->AsString(); }
 
-	void SetValue(std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> v) { value = v; }
+	void SetValue(std::optional<SymbolValue> v) { value = v; }
 
 private:
 	std::unique_ptr<Error> error = nullptr;
-	std::optional<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> value = std::nullopt;
+	std::optional<SymbolValue> value = std::nullopt;
 };
 
 class Interpreter

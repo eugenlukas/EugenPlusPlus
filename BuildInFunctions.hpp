@@ -16,7 +16,7 @@ public:
 	virtual std::string ToString() const = 0;
 };
 
-class PrintFunction : public BaseFunction
+class NativePrintFunction : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -25,7 +25,7 @@ class PrintFunction : public BaseFunction
 	}
 };
 
-class LengthFunction : public BaseFunction
+class NativeLengthFunction : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -34,7 +34,7 @@ class LengthFunction : public BaseFunction
 	}
 };
 
-class InputStr : public BaseFunction 
+class NativeInputStr : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -43,7 +43,7 @@ class InputStr : public BaseFunction
 	}
 };
 
-class InputNum : public BaseFunction
+class NativeInputNum : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -52,7 +52,7 @@ class InputNum : public BaseFunction
 	}
 };
 
-class Clear : public BaseFunction
+class NativeClear : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -61,7 +61,7 @@ class Clear : public BaseFunction
 	}
 };
 
-class IsNum : public BaseFunction
+class NativeIsNum : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -70,7 +70,7 @@ class IsNum : public BaseFunction
 	}
 };
 
-class IsStr : public BaseFunction
+class NativeIsStr : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -79,7 +79,7 @@ class IsStr : public BaseFunction
 	}
 };
 
-class IsList : public BaseFunction
+class NativeIsList : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -88,7 +88,7 @@ class IsList : public BaseFunction
 	}
 };
 
-class IsFunc : public BaseFunction
+class NativeIsFunc : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -97,7 +97,7 @@ class IsFunc : public BaseFunction
 	}
 };
 
-class Append : public BaseFunction
+class NativeAppend : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -106,7 +106,7 @@ class Append : public BaseFunction
 	}
 };
 
-class Pop : public BaseFunction
+class NativePop : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override
@@ -115,7 +115,7 @@ class Pop : public BaseFunction
 	}
 };
 
-class Extend : public BaseFunction
+class NativeExtend : public BaseFunction
 {
 	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
 	std::string ToString() const override

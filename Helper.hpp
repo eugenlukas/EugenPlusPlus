@@ -91,6 +91,10 @@ public:
                 result += "]";
                 return result;
             }
+            else if (std::holds_alternative<std::shared_ptr<BaseFunction>>(val))              // Print build in function name
+                return (std::get<std::shared_ptr<BaseFunction>>(val)->ToString());
+            else if (std::holds_alternative<std::shared_ptr<FuncDefNode>>(val))              // Print build in function name
+                return (std::get<std::shared_ptr<FuncDefNode>>(val)->Repr());
         }
         else
             return "";

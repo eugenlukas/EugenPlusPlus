@@ -1,7 +1,7 @@
 #include "BuildInFunctions.hpp"
 #include "Helper.hpp"
 
-RTResult PrintFunction::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativePrintFunction::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -14,7 +14,7 @@ RTResult PrintFunction::Execute(std::vector<std::variant<double, std::string, st
     return res.Success(std::nullopt);
 }
 
-RTResult LengthFunction::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeLengthFunction::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -37,14 +37,14 @@ RTResult LengthFunction::Execute(std::vector<std::variant<double, std::string, s
     }
 }
 
-RTResult InputStr::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeInputStr::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     std::string text = "";
     std::getline(std::cin, text);
     return RTResult().Success(text);
 }
 
-RTResult InputNum::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeInputNum::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     std::string text = "";
     double number = 0;
@@ -66,7 +66,7 @@ RTResult InputNum::Execute(std::vector<std::variant<double, std::string, std::sh
     return RTResult().Success(number);
 }
 
-RTResult Clear::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeClear::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -75,7 +75,7 @@ RTResult Clear::Execute(std::vector<std::variant<double, std::string, std::share
     return res.Success(std::nullopt);
 }
 
-RTResult IsNum::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeIsNum::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -88,7 +88,7 @@ RTResult IsNum::Execute(std::vector<std::variant<double, std::string, std::share
     }
 }
 
-RTResult IsStr::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeIsStr::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -101,7 +101,7 @@ RTResult IsStr::Execute(std::vector<std::variant<double, std::string, std::share
     }
 }
 
-RTResult IsList::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeIsList::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -114,7 +114,7 @@ RTResult IsList::Execute(std::vector<std::variant<double, std::string, std::shar
     }
 }
 
-RTResult IsFunc::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeIsFunc::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -127,7 +127,7 @@ RTResult IsFunc::Execute(std::vector<std::variant<double, std::string, std::shar
     }
 }
 
-RTResult Append::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeAppend::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -146,7 +146,7 @@ RTResult Append::Execute(std::vector<std::variant<double, std::string, std::shar
     return res.Success(std::nullopt);
 }
 
-RTResult Pop::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativePop::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
@@ -198,7 +198,7 @@ RTResult Pop::Execute(std::vector<std::variant<double, std::string, std::shared_
     return res.Success(popped_value);
 }
 
-RTResult Extend::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+RTResult NativeExtend::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
 {
     RTResult res;
 
