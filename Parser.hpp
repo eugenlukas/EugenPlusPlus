@@ -37,6 +37,7 @@ public:
 	}
 
 	std::shared_ptr<Node> Register(const ParseResult& res);
+	std::optional<std::shared_ptr<Node>> TryRegister(const ParseResult& res);
 	void RegisterAdvancement();
 	ParseResult& Success(std::shared_ptr<Node> node);
 	ParseResult& Failure(std::unique_ptr<Error> error);
@@ -47,11 +48,19 @@ public:
 	std::string GetError() const { return error->AsString(); }
 	Error* GetErrorPtr() { return error.get(); }
 	int GetAdvancementCount() const { return advancementCount; }
+	int GetToReverseCount() const { return toReverseCount; }
 
 private:
 	std::unique_ptr<Error> error = nullptr;
 	std::shared_ptr<Node> node = nullptr;
 	int advancementCount = 0;
+	int toReverseCount = 0;
+};
+
+struct CasesResult
+{
+	std::vector<IfCase> cases;
+	std::shared_ptr<Node> elseCase;
 };
 
 class Parser
@@ -60,9 +69,13 @@ public:
 	Parser(std::vector<Token> tokens);
 
 	Token Advance();
+	Token Reverse(int amount=1);
+
+	void UpdateCurrentToken();
 
 	ParseResult Parse();
 
+	ParseResult Statements();
 	ParseResult Expr();
 	ParseResult CompExpr();
 	ParseResult ArithExpr();
@@ -73,6 +86,10 @@ public:
 	ParseResult Atom();
 	ParseResult ListExpr();
 	ParseResult IfExpr();
+	ParseResult IfExprB();
+	ParseResult IfExprC(std::shared_ptr<IfCase>& outElseCase);
+	ParseResult IfExprBorC(CasesResult& outResult);
+	ParseResult IfExprCases(std::string caseKeyword, CasesResult& outResult);
 	ParseResult ForExpr();
 	ParseResult WhileExpr();
 	ParseResult FuncDef();

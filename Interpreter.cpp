@@ -59,7 +59,9 @@ RTResult Interpreter::Visit_ListNode(ListNode& node)
         auto result = Visit(elementNode);
         if (result.HasError())
             return result;
-        elements.push_back(result.GetValue().value());
+
+        if (result.GetValue().has_value())
+            elements.push_back(result.GetValue().value());
     }
     return res.Success(std::make_shared<List>(List(elements)));
 }
@@ -301,7 +303,10 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
             if (exprValue.GetValue().has_value() == false)
                 return res.Success(std::nullopt);
 
-            return res.Success(exprValue.GetValue().value());
+            if (!ifCase.GetShouldReturnNull())
+                return res.Success(exprValue.GetValue().value());
+            else
+                return res.Success(std::nullopt);
         }
     }
 
@@ -314,7 +319,10 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
         if (elseValue.GetValue().has_value() == false)
             return res.Success(std::nullopt);
 
-        return res.Success(elseValue.GetValue().value());
+        /*if (!node.GetElseCase())
+            return res.Success(elseValue.GetValue().value());
+        else*/
+            return res.Success(std::nullopt);
     }
 
     return res.Success(std::nullopt);
@@ -323,6 +331,7 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
 RTResult Interpreter::Visit_ForNode(ForNode& node)
 {
     RTResult res;
+    std::vector<ListValue> elements;
 
     RTResult startValue = Visit(node.GetStartValueNode());
     if (startValue.HasError())
@@ -356,14 +365,20 @@ RTResult Interpreter::Visit_ForNode(ForNode& node)
         res = Visit(node.GetBodyNode());
         if (res.HasError())
             return res;
+
+        elements.push_back(res.GetValue().value());
     }
 
-    return res.Success(std::nullopt);
+    if (!node.GetShouldReturnNull())
+        return res.Success(std::make_shared<List>(elements));
+    else
+        return res.Success(std::nullopt);
 }
 
 RTResult Interpreter::Visit_WhileNode(WhileNode& node)
 {
     RTResult res;
+    std::vector<ListValue> elements;
 
     while (true)
     {
@@ -377,9 +392,14 @@ RTResult Interpreter::Visit_WhileNode(WhileNode& node)
         res = Visit(node.GetBodyNode());
         if (res.HasError())
             return res;
+
+        elements.push_back(res.GetValue().value());
     }
 
-    return res.Success(std::nullopt);
+    if (!node.GetShouldReturnNull())
+        return res.Success(std::make_shared<List>(elements));
+    else
+        return res.Success(std::nullopt);
 }
 
 RTResult Interpreter::Visit_FuncDefNode(FuncDefNode& node)

@@ -31,6 +31,12 @@ int main()
         std::cout << "E++ > ";
         std::getline(std::cin, text);
 
+        // Check for empty input with or without whitespace characters
+        std::string trimText = text;
+        trimText.erase(std::remove_if(trimText.begin(), trimText.end(), [](unsigned char c) { return std::isspace(c); }), trimText.end());
+        if (trimText.empty())
+            continue;
+
         // Generate tokens
         Lexer lexer("<stdin>", text);
         MakeTokensResult tokenResult = lexer.MakeTokens();

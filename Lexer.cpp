@@ -44,9 +44,17 @@ MakeTokensResult Lexer::MakeTokens()
 			case '\t':
 				Advance();
 				break;
-				case '"':
-					tokens.push_back(makeString());
-					break;
+			case '\n':
+				tokens.push_back(Token(TT_NEWLINE, std::nullopt, pos));
+				Advance();
+				break;
+			case ';':
+				tokens.push_back(Token(TT_NEWLINE, std::nullopt, pos));
+				Advance();
+				break;
+			case '"':
+				tokens.push_back(makeString());
+				break;
 			case '+':
 				tokens.push_back(Token(TT_PLUS, std::nullopt, pos));
 				Advance();
@@ -106,6 +114,10 @@ MakeTokensResult Lexer::MakeTokens()
 				break;
 			case '@':
 				tokens.push_back(Token(TT_AT, std::nullopt, pos));
+				Advance();
+				break;
+			case '}':
+				tokens.push_back(Token(TT_RCURLYBRACKET, std::nullopt, pos));
 				Advance();
 				break;
 			default:

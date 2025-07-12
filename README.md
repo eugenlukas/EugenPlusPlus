@@ -6,6 +6,11 @@
 </div>
 
 <h2>Syntax</h2>
+
+~~~
+>			-Represents console output
+~~~
+
 <h3>Arithmetic operators</h3>
 
 ~~~
@@ -57,12 +62,15 @@ NULL			0
 ~~~
 VAR a = 10
 >10
+
 VAR b = 20
 >20
 
 a+b
 >30
+~~~
 
+~~~
 VAR c = "Hello"
 VAR d = "World"
 
@@ -113,17 +121,25 @@ sub(70, 1)
 ~~~
 "this is " + "a string"
 >this is a string
+~~~
 
+~~~
 "this is a \n string"
 >this is a 
  string
+ ~~~
 
+ ~~~
 "this is a \\ string"
 >this is a \ string
+~~~
 
+~~~
 "this is a \" string"
 >this is a " string
+~~~
 
+~~~
 ("Hello " * 3) + "Paul"
 > Hello Hello Hello Paul
 ~~~
@@ -133,19 +149,29 @@ sub(70, 1)
 ~~~
 ["name1", "name2", "name3"]
 >["name1", "name2", "name3"]
+~~~
 
+~~~
 ["name1", "name2", "name3"] @ 1
 >"name1"
+~~~
 
+~~~
 ["name1", "name2", "name3"] + 1
 >["name1", "name2", "name3", 1]
+~~~
 
+~~~
 ["name1", "name2", "name3"] + [1,2]
 >["name1", "name2", "name3", [1, 2]]
+~~~
 
+~~~
 [10, 20, 30] - 2
 >[10, 30]
+~~~
 
+~~~
 ["name1", "name2", "name3"] * ["name4", "name5"]
 >["name1", "name2", "name3", "name4", "name5"]
 ~~~
@@ -165,4 +191,50 @@ APPEND()		-takes in a list and a value to append
 POP()			-takes in a list and a number as index
 EXTEND()		-takes in two lists
 CLEAR()			-clears the console
+~~~
+
+<h3>Multi-line statements</h3>
+
+~~~
+;			-new line character(only option, because reading in entire files with multiple lines is in WIP)
+~~~
+
+~~~
+VAR result = IF 5 == 5 THEN "math works" ELSE "no"
+>"math works"
+~~~
+
+~~~
+IF 5 == 5 THEN; PRINT("math"); PRINT("works") ELSE PRINT("broken")
+>math
+>works
+~~~
+
+~~~
+FOR i = 1 TO 6 THEN; PRINT("Hello "); PRINT("World") }
+>Hello
+>World
+>Hello
+>World
+>Hello
+>World
+>Hello
+>World
+>Hello
+>World
+~~~
+
+~~~
+VAR i = 0
+WHILE i < 10 THEN; VAR i = i + 1; PRINT(i) }
+>1
+>2
+>3
+>4
+>5
+>6
+>7
+>8
+>9
+>10
 ~~~

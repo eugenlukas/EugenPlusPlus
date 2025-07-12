@@ -79,21 +79,29 @@ public:
             else if (std::holds_alternative<std::shared_ptr<List>>(val))    // Print list
             {
                 const auto& list = std::get<std::shared_ptr<List>>(val);
-                std::string result = "[";
-                for (size_t i = 0; i < list->elements.size(); ++i)
+
+                if (list->elements.size() == 1)                                 // Print the one result in the list directly
+                    return Print(RTResult().Success(list->elements[0]));
+                else if (list->elements.size() == 0)                            // Print empty string so it does not print []
+                    return "";
+                else                                                            // Print the results in the list as list
                 {
-                    result += Print(RTResult().Success(list->elements[i]));
-                    if (i != list->elements.size() - 1)
+                    std::string result = "[";
+                    for (size_t i = 0; i < list->elements.size(); ++i)
                     {
-                        result += ", ";
+                        result += Print(RTResult().Success(list->elements[i]));
+                        if (i != list->elements.size() - 1)
+                        {
+                            result += ", ";
+                        }
                     }
+                    result += "]";
+                    return result;
                 }
-                result += "]";
-                return result;
             }
             else if (std::holds_alternative<std::shared_ptr<BaseFunction>>(val))              // Print build in function name
                 return (std::get<std::shared_ptr<BaseFunction>>(val)->ToString());
-            else if (std::holds_alternative<std::shared_ptr<FuncDefNode>>(val))              // Print build in function name
+            else if (std::holds_alternative<std::shared_ptr<FuncDefNode>>(val))              // Print function name
                 return (std::get<std::shared_ptr<FuncDefNode>>(val)->Repr());
         }
         else

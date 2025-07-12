@@ -18,15 +18,17 @@ protected:
 class IfCase
 {
 public:
-	IfCase();
-	IfCase(std::shared_ptr<Node> condition, std::shared_ptr<Node> expr) : condition(condition), expr(expr) {}
+	IfCase() = default;
+	IfCase(std::shared_ptr<Node> condition, std::shared_ptr<Node> expr, bool shouldReturnNull) : condition(condition), expr(expr), shouldReturnNull(shouldReturnNull) {}
 
 	std::shared_ptr<Node> GetCondition() { return condition; }
 	std::shared_ptr<Node> GetExpr() { return expr; }
+	bool GetShouldReturnNull() const { return shouldReturnNull; }
 
 private:
 	std::shared_ptr<Node> condition;
 	std::shared_ptr<Node> expr;
+	bool shouldReturnNull;
 };
 
 class NumberNode : public Node
@@ -143,7 +145,7 @@ private:
 class ForNode : public Node
 {
 public:
-	ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::shared_ptr<Node> endValueNode, std::shared_ptr<Node> stepValueNode=nullptr, std::shared_ptr<Node> bodyNode=nullptr);
+	ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::shared_ptr<Node> endValueNode, std::shared_ptr<Node> stepValueNode=nullptr, std::shared_ptr<Node> bodyNode=nullptr, bool shouldReturnNull=false);
 
 	std::string Repr() override;
 	Token GetVarNameTok() { return varNameTok; }
@@ -151,6 +153,7 @@ public:
 	std::shared_ptr<Node> GetEndValueNode() { return endValueNode; }
 	std::shared_ptr<Node> GetStepValueNode() { return stepValueNode; }
 	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
+	bool GetShouldReturnNull() const { return shouldReturnNull; }
 
 private:
 	Token varNameTok;
@@ -158,36 +161,41 @@ private:
 	std::shared_ptr<Node> endValueNode;
 	std::shared_ptr<Node> stepValueNode;
 	std::shared_ptr<Node> bodyNode;
+	bool shouldReturnNull;
 };
 
 class WhileNode : public Node
 {
 public:
-	WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> bodyNode);
+	WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> bodyNode, bool shouldReturnNull);
 
 	std::string Repr() override;
 	std::shared_ptr<Node> GetConditionNode() { return conditionNode; }
 	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
+	bool GetShouldReturnNull() const { return shouldReturnNull; }
 
 private:
 	std::shared_ptr<Node> conditionNode;
 	std::shared_ptr<Node> bodyNode;
+	bool shouldReturnNull;
 };
 
 class FuncDefNode : public Node
 {
 public:
-	FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode);
+	FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldReturnNull);
 
 	std::string Repr() override;
 	std::optional<Token> GetVarNameTok() { return varNameTok; }
 	std::vector<Token> GetArgNameToks() { return argNameToks; }
 	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
+	bool GetShouldReturnNull() const { return shouldReturnNull; }
 
 private:
 	std::optional<Token> varNameTok;
 	std::vector<Token> argNameToks;
 	std::shared_ptr<Node> bodyNode;
+	bool shouldReturnNull;
 };
 
 class CallNode : public Node

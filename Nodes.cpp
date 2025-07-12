@@ -89,7 +89,10 @@ IfNode::IfNode(std::vector<IfCase> cases, std::shared_ptr<Node> elseCase)
 
 	if (!cases.empty())
 	{
-		posStart = cases[0].GetCondition()->GetPosStart();
+		if (cases[0].GetCondition())
+			posStart = cases[0].GetCondition()->GetPosStart();
+		else if (cases[0].GetExpr())
+			posStart = cases[0].GetExpr()->GetPosStart();
 
 		if (elseCase != nullptr)
 		{
@@ -97,7 +100,20 @@ IfNode::IfNode(std::vector<IfCase> cases, std::shared_ptr<Node> elseCase)
 		}
 		else
 		{
-			posEnd = cases.back().GetCondition()->GetPosEnd();
+			// Backward search for last available condition/expr
+			for (int i = static_cast<int>(cases.size()) - 1; i >= 0; --i)
+			{
+				if (cases[i].GetExpr())
+				{
+					posEnd = cases[i].GetExpr()->GetPosEnd();
+					break;
+				}
+				else if (cases[i].GetCondition())
+				{
+					posEnd = cases[i].GetCondition()->GetPosEnd();
+					break;
+				}
+			}
 		}
 	}
 }
@@ -121,13 +137,14 @@ std::string IfNode::Repr()
 	return repr;
 }
 
-ForNode::ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::shared_ptr<Node> endValueNode, std::shared_ptr<Node> stepValueNode, std::shared_ptr<Node> bodyNode)
+ForNode::ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::shared_ptr<Node> endValueNode, std::shared_ptr<Node> stepValueNode, std::shared_ptr<Node> bodyNode, bool shouldReturnNull)
 {
 	this->varNameTok = varNameTok;
 	this->startValueNode = startValueNode;
 	this->endValueNode = endValueNode;
 	this->stepValueNode = stepValueNode;
 	this->bodyNode = bodyNode;
+	this->shouldReturnNull = shouldReturnNull;
 
 	posStart = varNameTok.GetPosStart();
 	posEnd = varNameTok.GetPosEnd();
@@ -138,10 +155,11 @@ std::string ForNode::Repr()
 	return std::string();
 }
 
-WhileNode::WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> bodyNode)
+WhileNode::WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> bodyNode, bool shouldReturnNull)
 {
 	this->conditionNode = conditionNode;
 	this->bodyNode = bodyNode;
+	this->shouldReturnNull = shouldReturnNull;
 
 	posStart = conditionNode->GetPosStart();
 	posEnd = bodyNode->GetPosEnd();
@@ -152,11 +170,12 @@ std::string WhileNode::Repr()
 	return std::string();
 }
 
-FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode)
+FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldReturnNull)
 {
 	this->varNameTok = varNameTok;
 	this->argNameToks = argNameToks;
 	this->bodyNode = bodyNode;
+	this->shouldReturnNull = shouldReturnNull;
 
 	if (varNameTok.has_value())
 		posStart = varNameTok.value().GetPosStart();
