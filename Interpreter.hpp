@@ -56,6 +56,9 @@ public:
 			error = std::make_unique<Error>(*other.error);
 		}
 		value = other.value;
+		funcReturnValue = other.funcReturnValue;
+		loopShouldContinue = other.loopShouldContinue;
+		loopShouldBreak = other.loopShouldBreak;
 	}
 
 	RTResult& operator=(const RTResult& other)
@@ -70,23 +73,46 @@ public:
 			{
 				error.reset();
 			}
+
 			value = other.value;
+			funcReturnValue = other.funcReturnValue;
+			loopShouldContinue = other.loopShouldContinue;
+			loopShouldBreak = other.loopShouldBreak;
 		}
 		return *this;
 	}
 	RTResult& Success(std::optional<SymbolValue> value);
+	RTResult& SuccessReturn(std::optional<SymbolValue> value);
+	RTResult& SuccessContinue();
+	RTResult& SuccessBreak();
+
 	RTResult& Failure(std::unique_ptr<Error> error);
 
-	bool HasError() const { return error != nullptr; }
+	bool ShouldReturn();
 
-	std::optional<SymbolValue> GetValue() const { return value; }
+	void Reset();
+
+	bool HasError() const { return error != nullptr; }
 	std::string GetError() const { return error->AsString(); }
 
+	std::optional<SymbolValue> GetValue() const { return value; }
 	void SetValue(std::optional<SymbolValue> v) { value = v; }
+
+	std::optional<SymbolValue> GetFuncReturnValue() { return funcReturnValue; }
+	void SetFuncReturnValue(std::optional<SymbolValue> v) { funcReturnValue = v; }
+
+	bool GetLoopShouldContinue() { return loopShouldContinue; }
+	void SetLoopShouldContinue(bool v) { loopShouldContinue = v; }
+
+	bool GetLoopShouldBreak() { return loopShouldBreak; }
+	void SetLoopShouldBreak(bool v) { loopShouldBreak = v; }
 
 private:
 	std::unique_ptr<Error> error = nullptr;
 	std::optional<SymbolValue> value = std::nullopt;
+	std::optional<SymbolValue> funcReturnValue = std::nullopt;
+	bool loopShouldContinue = false;
+	bool loopShouldBreak = false;
 };
 
 class Interpreter
@@ -111,4 +137,7 @@ private:
 	RTResult Visit_WhileNode(WhileNode& node);
 	RTResult Visit_FuncDefNode(FuncDefNode& node);
 	RTResult Visit_CallNode(CallNode& node);
+	RTResult Visit_ReturnNode(ReturnNode& node);
+	RTResult Visit_ContinueNode(ContinueNode& node);
+	RTResult Visit_BreakNode(BreakNode& node);
 };

@@ -27,6 +27,12 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
         return Visit_CallNode(*call);
     if (auto list = dynamic_cast<ListNode*>(node.get()))
         return Visit_ListNode(*list);
+    if (auto return_ = dynamic_cast<ReturnNode*>(node.get()))
+        return Visit_ReturnNode(*return_);
+    if (auto continue_ = dynamic_cast<ContinueNode*>(node.get()))
+        return Visit_ContinueNode(*continue_);
+    if (auto break_ = dynamic_cast<BreakNode*>(node.get()))
+        return Visit_BreakNode(*break_);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
 }
@@ -57,7 +63,7 @@ RTResult Interpreter::Visit_ListNode(ListNode& node)
     for (auto elementNode : node.GetElementNodes())
     {
         auto result = Visit(elementNode);
-        if (result.HasError())
+        if (result.ShouldReturn())
             return result;
 
         if (result.GetValue().has_value())
@@ -71,9 +77,9 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
     auto left = Visit(node.GetLeftNode());
     auto right = Visit(node.GetRightNode());
 
-    if (left.HasError())
+    if (left.ShouldReturn())
         return left;
-    if (right.HasError())
+    if (right.ShouldReturn())
         return right;
 
     auto l = left.GetValue().value();
@@ -221,7 +227,7 @@ RTResult Interpreter::Visit_BinOpNode(BinOpNode& node)
 RTResult Interpreter::Visit_UnaryOpNode(UnaryOpNode& node)
 {
     RTResult res_num = Visit(node.GetNode());
-    if (res_num.HasError()) return res_num;
+    if (res_num.ShouldReturn()) return res_num;
 
     double num = std::get<double>(res_num.GetValue().value());
     std::string op_type = node.GetOpToken().GetType();
@@ -271,7 +277,7 @@ RTResult Interpreter::Visit_VarAssignNode(VarAssignNode& node)
     std::string varName = std::get<std::string>(node.GetVarNameToken().GetValue());
     RTResult res_value = Visit(node.GetValueNode());
 
-    if (res_value.HasError())
+    if (res_value.ShouldReturn())
         return res_value;
 
     if (std::holds_alternative<double>(res_value.GetValue().value()))
@@ -291,13 +297,13 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
     for (IfCase& ifCase : node.GetCases())
     {
         RTResult conditionValue = Visit(ifCase.GetCondition());
-        if (conditionValue.HasError())
+        if (conditionValue.ShouldReturn())
             return conditionValue;
 
         if (std::get<double>(conditionValue.GetValue().value()) != 0)
         {
             RTResult exprValue = Visit(ifCase.GetExpr());
-            if (exprValue.HasError())
+            if (exprValue.ShouldReturn())
                 return exprValue;
 
             if (exprValue.GetValue().has_value() == false)
@@ -313,7 +319,7 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
     if (node.GetElseCase() != nullptr)
     {
         RTResult elseValue = Visit(node.GetElseCase());
-        if (elseValue.HasError())
+        if (elseValue.ShouldReturn())
             return elseValue;
 
         if (elseValue.GetValue().has_value() == false)
@@ -334,18 +340,18 @@ RTResult Interpreter::Visit_ForNode(ForNode& node)
     std::vector<ListValue> elements;
 
     RTResult startValue = Visit(node.GetStartValueNode());
-    if (startValue.HasError())
+    if (startValue.ShouldReturn())
         return startValue;
 
     RTResult endValue = Visit(node.GetEndValueNode());
-    if (endValue.HasError())
+    if (endValue.ShouldReturn())
         return endValue;
 
     RTResult stepValue;
     if (node.GetStepValueNode() != nullptr)
     {
         stepValue = Visit(node.GetStepValueNode());
-        if (stepValue.HasError())
+        if (stepValue.ShouldReturn())
             return startValue;
     }
     else
@@ -363,8 +369,14 @@ RTResult Interpreter::Visit_ForNode(ForNode& node)
         symbolTable.Set(std::get<std::string>(node.GetVarNameTok().GetValue()), static_cast<double>(i));
 
         res = Visit(node.GetBodyNode());
-        if (res.HasError())
+        if (res.ShouldReturn() && !res.GetLoopShouldContinue() && !res.GetLoopShouldBreak())
             return res;
+
+        if (res.GetLoopShouldContinue())
+            continue;
+
+        if (res.GetLoopShouldBreak())
+            break;
 
         elements.push_back(res.GetValue().value());
     }
@@ -383,15 +395,21 @@ RTResult Interpreter::Visit_WhileNode(WhileNode& node)
     while (true)
     {
         auto condition = Visit(node.GetConditionNode());
-        if (condition.HasError())
+        if (condition.ShouldReturn())
             return condition;
 
         if (std::get<double>(condition.GetValue().value()) == 0)
             break;
 
         res = Visit(node.GetBodyNode());
-        if (res.HasError())
+        if (res.ShouldReturn() && !res.GetLoopShouldContinue() && !res.GetLoopShouldBreak())
             return res;
+
+        if (res.GetLoopShouldContinue())
+            continue;
+
+        if (res.GetLoopShouldBreak())
+            break;
 
         elements.push_back(res.GetValue().value());
     }
@@ -443,7 +461,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
         for (size_t i = 0; i < node.GetArgNodes().size(); ++i)
         {
             auto argRes = Visit(node.GetArgNodes()[i]);
-            if (argRes.HasError()) return argRes;
+            if (argRes.ShouldReturn()) return argRes;
 
             std::string argName = std::get<std::string>(funcNodePtr->GetArgNameToks()[i].GetValue());
             auto argResVal = argRes.GetValue().value();
@@ -460,8 +478,15 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
         Interpreter funcInterpreter(localSymbolTable);
         auto result = funcInterpreter.Visit(funcNodePtr->GetBodyNode());
         if (result.HasError()) return result;
+        if (result.GetLoopShouldBreak() || result.GetLoopShouldContinue())
+            return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Cannot use 'break' or 'continue' outside of a loop"));
 
-        return res.Success(result.GetValue());
+        if (result.GetFuncReturnValue().has_value())
+            return res.Success(result.GetFuncReturnValue());
+        else if (funcNodePtr->GetShouldAutoReturn())
+            return res.Success(result.GetValue());
+        else
+            return res.Success(std::nullopt);
     }
     // Handle built-in functions
     else if (std::holds_alternative<std::shared_ptr<BaseFunction>>(funcValue.value()))
@@ -472,7 +497,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
         for (auto& argNode : node.GetArgNodes())
         {
             auto argRes = Visit(argNode);
-            if (argRes.HasError()) return argRes;
+            if (argRes.ShouldReturn()) return argRes;
 
             auto val = argRes.GetValue().value();
             if (std::holds_alternative<double>(val) || std::holds_alternative<std::string>(val) || std::holds_alternative<std::shared_ptr<List>>(val) || std::holds_alternative<std::shared_ptr<BaseFunction>>(val) || std::holds_alternative<std::shared_ptr<FuncDefNode>>(val))
@@ -486,7 +511,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
         }
 
         auto result = func->Execute(args);
-        if (result.HasError()) return result;
+        if (result.ShouldReturn()) return result;
 
         return res.Success(result.GetValue());
     }
@@ -496,14 +521,80 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
     }
 }
 
+RTResult Interpreter::Visit_ReturnNode(ReturnNode& node)
+{
+    RTResult res;
+
+    if (node.GetNodeToReturn().has_value())
+    {
+        res = Visit(node.GetNodeToReturn().value());
+        if (res.ShouldReturn())
+            return res;
+
+        return res.SuccessReturn(res.GetValue().value());
+    }
+    else
+        return res.SuccessReturn(std::nullopt);
+}
+
+RTResult Interpreter::Visit_ContinueNode(ContinueNode& node)
+{
+    return RTResult().SuccessContinue();
+}
+
+RTResult Interpreter::Visit_BreakNode(BreakNode& node)
+{
+    return RTResult().SuccessBreak();
+}
+
 RTResult& RTResult::Success(std::optional<SymbolValue> value)
 {
+    Reset();
     this->value = value;
+    return *this;
+}
+
+RTResult& RTResult::SuccessReturn(std::optional<SymbolValue> value)
+{
+    Reset();
+    this->funcReturnValue = value;
+    return *this;
+}
+
+RTResult& RTResult::SuccessContinue()
+{
+    Reset();
+    loopShouldContinue = true;
+    return *this;
+}
+
+RTResult& RTResult::SuccessBreak()
+{
+    Reset();
+    loopShouldBreak = true;
     return *this;
 }
 
 RTResult& RTResult::Failure(std::unique_ptr<Error> error)
 {
+    Reset();
     this->error = std::move(error);
     return *this;
+}
+
+bool RTResult::ShouldReturn()
+{
+    if (error != nullptr || funcReturnValue.has_value() || loopShouldContinue || loopShouldBreak)
+        return true;
+    else
+        return false;
+}
+
+void RTResult::Reset()
+{
+    error = nullptr;
+    value = std::nullopt;
+    funcReturnValue = std::nullopt;
+    loopShouldContinue = false;
+    loopShouldBreak = false;
 }

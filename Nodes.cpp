@@ -170,12 +170,12 @@ std::string WhileNode::Repr()
 	return std::string();
 }
 
-FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldReturnNull)
+FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn)
 {
 	this->varNameTok = varNameTok;
 	this->argNameToks = argNameToks;
 	this->bodyNode = bodyNode;
-	this->shouldReturnNull = shouldReturnNull;
+	this->shouldAutoReturn = shouldAutoReturn;
 
 	if (varNameTok.has_value())
 		posStart = varNameTok.value().GetPosStart();
@@ -189,7 +189,7 @@ FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> arg
 
 std::string FuncDefNode::Repr()
 {
-	return std::string();
+	return "<function '" + std::get<std::string>(varNameTok.value().GetValue()) + "'>";
 }
 
 CallNode::CallNode(std::shared_ptr<Node> nodeToCall, std::vector<std::shared_ptr<Node>> argNodes)
@@ -233,4 +233,38 @@ std::string ListNode::Repr()
 	}
 	result += "]";
 	return result;
+}
+
+ReturnNode::ReturnNode(std::optional<std::shared_ptr<Node>> nodeToReturn, Position posStart, Position posEnd)
+{
+	this->nodeToReturn = nodeToReturn;
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+}
+
+std::string ReturnNode::Repr()
+{
+	return std::string();
+}
+
+ContinueNode::ContinueNode(Position posStart, Position posEnd)
+{
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+}
+
+std::string ContinueNode::Repr()
+{
+	return std::string();
+}
+
+BreakNode::BreakNode(Position posStart, Position posEnd)
+{
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+}
+
+std::string BreakNode::Repr()
+{
+	return std::string();
 }

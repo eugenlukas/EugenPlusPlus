@@ -123,3 +123,12 @@ class NativeExtend : public BaseFunction
 		return "<built-in function 'EXTEND'>";
 	}
 };
+
+class NativeSystem : public BaseFunction
+{
+	RTResult Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args) override;
+	std::string ToString() const override
+	{
+		return "<built-in function 'SYSTEM'>";
+	}
+};

@@ -50,7 +50,7 @@ ParseResult Parser::Statements()
 		res.RegisterAdvancement();
 	}
 
-	std::optional<std::shared_ptr<Node>> statement = res.Register(Expr());
+	std::optional<std::shared_ptr<Node>> statement = res.Register(Statement());
 	if (res.HasError())
 		return res;
 
@@ -74,7 +74,7 @@ ParseResult Parser::Statements()
 		if (!moreStatements)
 			break;
 
-		statement = res.TryRegister(Expr());
+		statement = res.TryRegister(Statement());
 		if (!statement.has_value())
 		{
 			Reverse(res.GetToReverseCount());
@@ -89,6 +89,45 @@ ParseResult Parser::Statements()
 		return res.Success(statements[0]);
 	else
 		return res.Success(std::make_unique<ListNode>(statements, posStart, currentToken.GetPosEnd().Copy()));
+}
+
+ParseResult Parser::Statement()
+{
+	ParseResult res;
+	Position posStart = currentToken.GetPosStart().Copy();
+
+	if (currentToken.Matches(TT_KEYWORD, "RETURN"))
+	{
+		Advance();
+		res.RegisterAdvancement();
+
+		std::optional<std::shared_ptr<Node>> expr = res.TryRegister(Expr());
+		if (!expr.has_value())
+			Reverse(res.GetToReverseCount());
+		return res.Success(std::make_unique<ReturnNode>(expr, posStart, currentToken.GetPosEnd().Copy()));
+	}
+
+	if (currentToken.Matches(TT_KEYWORD, "CONTINUE"))
+	{
+		Advance();
+		res.RegisterAdvancement();
+
+		return res.Success(std::make_unique<ContinueNode>(posStart, currentToken.GetPosEnd().Copy()));
+	}
+
+	if (currentToken.Matches(TT_KEYWORD, "BREAK"))
+	{
+		Advance();
+		res.RegisterAdvancement();
+
+		return res.Success(std::make_unique<BreakNode>(posStart, currentToken.GetPosEnd().Copy()));
+	}
+
+	std::shared_ptr<Node> expr = res.Register(Expr());
+	if (res.HasError())
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(', '[', 'IF', 'FOR', 'WHILE', 'FUNC', 'RETURN', 'CONTINUE', 'BREAK' or NOT"));
+
+	return res.Success(expr);
 }
 
 ParseResult Parser::Expr()
@@ -422,7 +461,7 @@ ParseResult Parser::IfExprC(std::shared_ptr<IfCase>& outElseCase)
 		}
 		else
 		{
-			std::shared_ptr<Node> expr = res.Register(Expr());
+			std::shared_ptr<Node> expr = res.Register(Statement());
 			if (res.HasError())
 				return res;
 
@@ -513,7 +552,7 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 	}
 	else
 	{
-		std::shared_ptr<Node> expr = res.Register(Expr());
+		std::shared_ptr<Node> expr = res.Register(Statement());
 		if (res.HasError()) return res;
 
 		cases.push_back(IfCase(condition, expr, false));
@@ -605,7 +644,7 @@ ParseResult Parser::ForExpr()
 		return res.Success(std::make_unique<ForNode>(varName, startValue, endValue, stepValue, body, true));
 	}
 
-	std::shared_ptr<Node> body = res.Register(Expr());
+	std::shared_ptr<Node> body = res.Register(Statement());
 	if (res.HasError())
 		return res;
 
@@ -650,7 +689,7 @@ ParseResult Parser::WhileExpr()
 		return res.Success(std::make_shared<WhileNode>(condition, body, true));
 	}
 
-	std::shared_ptr<Node> body = res.Register(Expr());
+	std::shared_ptr<Node> body = res.Register(Statement());
 	if (res.HasError())
 		return res;
 
@@ -718,8 +757,13 @@ ParseResult Parser::FuncDef()
 		Advance();
 		res.RegisterAdvancement();
 	}
+	else if (currentToken.GetType() == TT_RPAREN)
+	{
+		Advance();
+		res.RegisterAdvancement();
+	}
 	else
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier or '('"));
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier or ')'"));
 
 	if (currentToken.GetType() == TT_ARROW)
 	{
@@ -730,7 +774,7 @@ ParseResult Parser::FuncDef()
 		if (res.HasError())
 			return res;
 
-		return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, nodeToReturn, false));
+		return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, nodeToReturn, true));
 	}
 	
 	if (currentToken.GetType() != TT_NEWLINE)
@@ -749,7 +793,7 @@ ParseResult Parser::FuncDef()
 	Advance();
 	res.RegisterAdvancement();
 
-	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, body, true));
+	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, body, false));
 }
 
 ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b)

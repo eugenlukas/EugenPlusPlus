@@ -24,6 +24,7 @@ int main()
     globalSymbolTable.Set("POP", std::make_shared<NativePop>());
     globalSymbolTable.Set("EXTEND", std::make_shared<NativeExtend>());
     globalSymbolTable.Set("CLEAR", std::make_shared<NativeClear>());
+    globalSymbolTable.Set("SYSTEM", std::make_shared<NativeSystem>());
 
     while (true)
     {

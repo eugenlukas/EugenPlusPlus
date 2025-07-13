@@ -183,19 +183,19 @@ private:
 class FuncDefNode : public Node
 {
 public:
-	FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldReturnNull);
+	FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn);
 
 	std::string Repr() override;
 	std::optional<Token> GetVarNameTok() { return varNameTok; }
 	std::vector<Token> GetArgNameToks() { return argNameToks; }
 	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
-	bool GetShouldReturnNull() const { return shouldReturnNull; }
+	bool GetShouldAutoReturn() const { return shouldAutoReturn; }
 
 private:
 	std::optional<Token> varNameTok;
 	std::vector<Token> argNameToks;
 	std::shared_ptr<Node> bodyNode;
-	bool shouldReturnNull;
+	bool shouldAutoReturn;
 };
 
 class CallNode : public Node
@@ -210,4 +210,32 @@ public:
 private:
 	std::shared_ptr<Node> nodeToCall;
 	std::vector<std::shared_ptr<Node>> argNodes;
+};
+
+class ReturnNode : public Node
+{
+public:
+	ReturnNode(std::optional<std::shared_ptr<Node>> nodeToReturn, Position posStart, Position posEnd);
+
+	std::string Repr() override;
+	std::optional<std::shared_ptr<Node>> GetNodeToReturn() { return nodeToReturn; }
+
+private:
+	std::optional<std::shared_ptr<Node>> nodeToReturn;
+};
+
+class ContinueNode : public Node
+{
+public:
+	ContinueNode(Position posStart, Position posEnd);
+
+	std::string Repr() override;
+};
+
+class BreakNode : public Node
+{
+public:
+	BreakNode(Position posStart, Position posEnd);
+
+	std::string Repr() override;
 };

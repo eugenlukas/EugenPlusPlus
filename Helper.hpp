@@ -82,8 +82,6 @@ public:
 
                 if (list->elements.size() == 1)                                 // Print the one result in the list directly
                     return Print(RTResult().Success(list->elements[0]));
-                else if (list->elements.size() == 0)                            // Print empty string so it does not print []
-                    return "";
                 else                                                            // Print the results in the list as list
                 {
                     std::string result = "[";

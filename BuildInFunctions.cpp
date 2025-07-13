@@ -224,3 +224,22 @@ RTResult NativeExtend::Execute(std::vector<std::variant<double, std::string, std
 
     return res.Success(std::nullopt);
 }
+
+RTResult NativeSystem::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+{
+    RTResult res;
+
+    if (args.size() != 1)
+    {
+        return res.Failure(std::make_unique<RuntimeError>(Position(), Position(), "SYSTEM() takes exactly 1 argument"));
+    }
+
+    if (!std::holds_alternative<std::string>(args[0]))
+    {
+        return res.Failure(std::make_unique<RuntimeError>(Position(), Position(), "Argument must be a string"));
+    }
+
+    system(std::get<std::string>(args[0]).c_str());
+
+    return res.Success(std::nullopt);
+}

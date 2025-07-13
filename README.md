@@ -191,6 +191,7 @@ APPEND()		-takes in a list and a value to append
 POP()			-takes in a list and a number as index
 EXTEND()		-takes in two lists
 CLEAR()			-clears the console
+SYSTEM()		-takes in a string as command
 ~~~
 
 <h3>Multi-line statements</h3>
@@ -237,4 +238,30 @@ WHILE i < 10 THEN; VAR i = i + 1; PRINT(i) }
 >8
 >9
 >10
+~~~
+
+<h3>RETURN, CONTINUE and BREAK</h3>
+<h6>multi line functions dont auto return the value(s)</h6>
+
+~~~
+FUNC test(); VAR foo = 5; RETURN foo; }
+test()
+>5
+~~~
+
+~~~
+VAR a = []
+FOR i = 0 TO 10 THEN; IF a == 4 THEN CONTINUE; IF i == 8 THEN BREAK; VAR a = a + i }
+a
+
+>[0, 1, 2, 3, 5, 6, 7]
+~~~
+
+~~~
+VAR a = []
+VAR i = 0
+WHILE i < 10 THEN; VAR i = i + 1; IF a == 4 THEN CONTINUE; IF i == 8 THEN BREAK; VAR a = a + i }
+a
+
+>[0, 1, 2, 3, 5, 6, 7]
 ~~~
