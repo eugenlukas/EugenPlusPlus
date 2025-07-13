@@ -1,14 +1,43 @@
 <div align="center">
 
+<img src="Logo.png" height=250>
+
 <h1>The Eugen++ Programming Language</h1>
 <p>A general-purpose programming language, focused on simplicity.</p>
 
 </div>
 
+<h2>How to run</h2>
+
+<h3>Run file</h3>
+<h6>When .epp files are not associated with Eugen++.exe</h6>
+<h6>.\Eugen++.exe can very depending on where Eugen++.exe is located in storage</h6>
+
+~~~
+ .\Eugen++.exe F:\EugenPlusPlusTestFile.epp 
+ ~~~
+
+ <h3>Use in console</h3>
+ <h6>Run the eugen++.exe normally via double click or per console</h6>
+ <h6>.\Eugen++.exe can very depending on where Eugen++.exe is located in storage</h6>
+
+ ~~~
+ .\Eugen++.exe
+ ~~~
+
+ <h3>Possible arguments to pass through the exe</h3>
+
+ ~~~
+ filepath		-run file directly (must be at the first position when used)
+ --tokens		-shows all tokens
+ --ast			-abstract syntax tree
+ ~~~
+
 <h2>Syntax</h2>
 
 ~~~
->			-Represents console output
+>			-Represents console output in this README
+//			-Comment (whole line)
 ~~~
 
 <h3>Arithmetic operators</h3>
@@ -177,6 +206,7 @@ sub(70, 1)
 ~~~
 
 <h3>Native/Buildin functions</h3>
+<h6>Examples in one line formate</h6>
 
 ~~~
 PRINT()			-takes in a string to output
@@ -197,7 +227,7 @@ SYSTEM()		-takes in a string as command
 <h3>Multi-line statements</h3>
 
 ~~~
-;			-new line character(only option, because reading in entire files with multiple lines is in WIP)
+;			-functions as a statement terminator. Replacing it with actual line breaks does not alter the semantics of the code.
 ~~~
 
 ~~~
@@ -242,6 +272,7 @@ WHILE i < 10 THEN; VAR i = i + 1; PRINT(i) }
 
 <h3>RETURN, CONTINUE and BREAK</h3>
 <h6>multi line functions dont auto return the value(s)</h6>
+<h4>Example for writing functions on multiple lines when running from file</h4>
 
 ~~~
 FUNC test(); VAR foo = 5; RETURN foo; }
@@ -251,7 +282,7 @@ test()
 
 ~~~
 VAR a = []
-FOR i = 0 TO 10 THEN; IF a == 4 THEN CONTINUE; IF i == 8 THEN BREAK; VAR a = a + i }
+FOR i = 0 TO 10 THEN; IF i == 4 THEN CONTINUE; IF i == 8 THEN BREAK; VAR a = a + i }
 a
 
 >[0, 1, 2, 3, 5, 6, 7]
@@ -260,7 +291,50 @@ a
 ~~~
 VAR a = []
 VAR i = 0
-WHILE i < 10 THEN; VAR i = i + 1; IF a == 4 THEN CONTINUE; IF i == 8 THEN BREAK; VAR a = a + i }
+WHILE i < 10 THEN; VAR i = i + 1; IF i == 4 THEN CONTINUE; IF i == 8 THEN BREAK; VAR a = a + i }
+a
+
+>[0, 1, 2, 3, 5, 6, 7]
+~~~
+
+<h4>Example for writing functions on multiple lines when running from file</h4>
+<h6>Note: The semicolon (';') functions as a statement terminator. Replacing it with actual line breaks does not alter the semantics of the code.</h6>
+
+~~~
+FUNC test()
+	VAR foo = 5
+	RETURN foo
+}
+
+test()
+
+>5
+~~~
+
+~~~
+VAR a = []
+
+FOR i = 0 TO 10 THEN
+	IF i == 4 THEN CONTINUE
+	IF i == 8 THEN BREAK
+	VAR a = a + i 
+}
+
+a
+
+>[0, 1, 2, 3, 5, 6, 7]
+~~~
+
+~~~
+VAR a = []
+VAR i = 0
+WHILE i < 10 THEN
+	VAR i = i + 1
+	IF i == 4 THEN CONTINUE
+	IF i == 8 THEN BREAK
+	VAR a = a + i
+}
+
 a
 
 >[0, 1, 2, 3, 5, 6, 7]

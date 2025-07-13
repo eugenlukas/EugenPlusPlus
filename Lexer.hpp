@@ -41,6 +41,7 @@ private:
 	Token makeEquals();
 	Token makeLessThen();
 	Token makeGreaterThen();
+	std::optional<Token> makeDivOrComment();
 
 private:
 	std::string fn;

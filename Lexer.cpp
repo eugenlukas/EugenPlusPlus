@@ -30,6 +30,12 @@ MakeTokensResult Lexer::MakeTokens()
 	{
 		if (current_char == ' ' || current_char == '\t')
 			Advance();
+		else if (current_char == '/')
+		{
+			auto result = makeDivOrComment();
+			if (result.has_value())
+				tokens.push_back(result.value());
+		}
 		else if (std::isdigit(current_char))
 			tokens.push_back(makeNumber());
 		else if (std::strchr(LETTERS, current_char))
@@ -64,10 +70,6 @@ MakeTokensResult Lexer::MakeTokens()
 				break;
 			case '*':
 				tokens.push_back(Token(TT_MUL, std::nullopt, pos));
-				Advance();
-				break;
-			case '/':
-				tokens.push_back(Token(TT_DIV, std::nullopt, pos));
 				Advance();
 				break;
 			case '^':
@@ -298,6 +300,27 @@ Token Lexer::makeGreaterThen()
 	{
 		Advance();
 		tokType = TT_GTEQ;
+	}
+
+	return Token(tokType, std::nullopt, posStart, pos);
+}
+
+std::optional<Token> Lexer::makeDivOrComment()
+{
+	std::string tokType = TT_DIV;
+
+	Position posStart = pos.Copy();
+	Advance();
+
+	if (current_char == '/')
+	{
+		while (current_char != '\n')
+		{
+			Advance();
+		}
+		Advance();
+
+		return std::nullopt;
 	}
 
 	return Token(tokType, std::nullopt, posStart, pos);

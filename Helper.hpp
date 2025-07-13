@@ -105,4 +105,16 @@ public:
         else
             return "";
     }
+
+    static bool argv_has(int argc, char* argv[], const std::string& target)
+    {
+        for (int i = 1; i < argc; ++i)
+        {
+            if (target == argv[i])
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 };
