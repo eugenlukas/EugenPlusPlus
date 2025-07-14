@@ -73,15 +73,19 @@ private:
 class VarAccessNode : public Node
 {
 public:
-	VarAccessNode(Token varNameTok);
+	VarAccessNode(Token varNameTok, std::optional<std::string> moduleAlias);
 
 	std::string Repr() override;
 	Token GetVarNameToken() { return varNameTok; }
 	Position GetPosStart() { return posStart; }
 	Position GetPosEnd() { return posEnd; }
+	std::optional<std::string> GetModuleAlias() { return moduleAlias; }
+
+	bool IsNamespaced() const { return moduleAlias.has_value(); }
 
 private:
 	Token varNameTok;
+	std::optional<std::string> moduleAlias;
 };
 
 class VarAssignNode : public Node
@@ -238,4 +242,18 @@ public:
 	BreakNode(Position posStart, Position posEnd);
 
 	std::string Repr() override;
+};
+
+class ImportNode : public Node
+{
+public:
+	ImportNode(Token filepathToken, std::string alias, Position posStart, Position posEnd);
+
+	std::string Repr() override;
+	Token GetFilepathToken() { return filepathToken; }
+	std::string GetAlias() { return alias; }
+
+private:
+	Token filepathToken;
+	std::string alias;
 };

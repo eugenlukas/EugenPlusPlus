@@ -120,10 +120,14 @@ class Interpreter
 public:
 	Interpreter(SymbolTable& symbolTable) : symbolTable(symbolTable) {}
 
+	void SetMainFilePath(std::string mainFilePath) { this->mainFilePath = mainFilePath; }
+
 	RTResult Visit(std::shared_ptr<Node> node);
 
 private:
 	SymbolTable& symbolTable;
+	std::string mainFilePath = "";
+	std::unordered_map<std::string, std::shared_ptr<SymbolTable>> importedModules;
 
 	RTResult Visit_NumberNode(NumberNode& node);
 	RTResult Visit_StringNode(StringNode& node);
@@ -140,4 +144,5 @@ private:
 	RTResult Visit_ReturnNode(ReturnNode& node);
 	RTResult Visit_ContinueNode(ContinueNode& node);
 	RTResult Visit_BreakNode(BreakNode& node);
+	RTResult Visit_ImportNode(ImportNode& node);
 };

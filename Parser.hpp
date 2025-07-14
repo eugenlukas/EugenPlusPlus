@@ -77,6 +77,7 @@ public:
 
 	ParseResult Statements();
 	ParseResult Statement();
+	ParseResult ImportStatement();
 	ParseResult Expr();
 	ParseResult CompExpr();
 	ParseResult ArithExpr();

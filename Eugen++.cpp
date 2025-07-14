@@ -51,11 +51,6 @@ int main(int argc, char** argv)
             text = content;
             loadedFromFile = true;
         }
-        else
-        {
-            std::cout << "Could not bind first argument to a file.\n";
-            return 1;
-        }
     }
 
     while (true)
@@ -73,7 +68,7 @@ int main(int argc, char** argv)
             continue;
 
         // Generate tokens
-        Lexer lexer("<stdin>", text);
+        Lexer lexer(loadedFromFile ? std::filesystem::path(argv[1]).filename().string() : "<stdin>", text);
         MakeTokensResult tokenResult = lexer.MakeTokens();
 
         if (tokenResult.error != nullptr)
@@ -109,6 +104,7 @@ int main(int argc, char** argv)
             std::cout << "AST: " << ast.GetNode()->Repr() << std::endl;
 
         Interpreter interpreter(globalSymbolTable);
+        interpreter.SetMainFilePath(loadedFromFile ? argv[1] : std::filesystem::current_path().string());
         auto result = interpreter.Visit(ast.GetNode());
 
         if (result.HasError())

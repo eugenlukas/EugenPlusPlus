@@ -42,6 +42,7 @@ private:
 	Token makeLessThen();
 	Token makeGreaterThen();
 	std::optional<Token> makeDivOrComment();
+	std::optional<Token> makeDblConon();
 
 private:
 	std::string fn;

@@ -1,59 +1,63 @@
-statements	:	NEWLINE* statement (NEWLINE+ statement)* NEWLINE*
+statements			:	NEWLINE* statement (NEWLINE+ statement)* NEWLINE*
 
-statement	:	KEYWORD:RETURN expr?
-			:	KEYWORD:CONTINUE
-			:	KEYWORD:BREAK
-			:	expr 
+statement			:	import-statement
+					:	KEYWORD:RETURN expr?
+					:	KEYWORD:CONTINUE
+					:	KEYWORD:BREAK
+					:	expr 
 
-expr		:	KEYWORD:VAR IDENTIFIER EQ expr
-			:	comp-expr ((KEYWORD:AND|KEYWORD:OR)comp-expr)*
+import-statement	: HASH KEYWORD:IMPORT STRING KEYWORD:AS IDENTIFIER
 
-comp-epr	:	NOT comp-expr
-			:	arith-expr ((EQEQ|LT|GT|LTEQ|GTEQ) arith-expr)*
+expr				:	KEYWORD:VAR IDENTIFIER EQ expr
+					:	comp-expr ((KEYWORD:AND|KEYWORD:OR)comp-expr)*
 
-arith-expr	:	term((PLUS|MINUS) term)*
+comp-epr			:	NOT comp-expr
+					:	arith-expr ((EQEQ|LT|GT|LTEQ|GTEQ) arith-expr)*
 
-term		:	factor((MUL|DIV|AT) factor)*
+arith-expr			:	term((PLUS|MINUS) term)*
 
-factor		:	(PLUS|MINUS) factor
-			:	power
+term				:	factor((MUL|DIV|AT) factor)*
 
-power		:	call (POW factor)*
+factor				:	(PLUS|MINUS) factor
+					:	power
 
-call		:	atom (LPARAM (expr (COMMA expr)*)? RPARAM)?
+power				:	call (POW factor)*
 
-atom		:	INT|FLOAT|STRING|IDENTIFIER
-			:	LPAREN expr RPAREN
-			:	list-expr
-			:	if-expr
-			:	for-expr
-			:	while-expr
-			:	func-def
+call				:	atom (LPARAM (expr (COMMA expr)*)? RPARAM)?
 
-list-expr	:	LSQUARE (expr (COMMA expr)*)? RSQUARE
+atom				:	INT|FLOAT|STRING|IDENTIFIER
+					:	IDENTIFIER (DBLCONON IDENTIFIER)?
+					:	LPAREN expr RPAREN
+					:	list-expr
+					:	if-expr
+					:	for-expr
+					:	while-expr
+					:	func-def
 
-if-expr		:	KEYWORD:IF expr KEYWORD:THEN
-				(statement if-expr-b| if-expr-c?)
-			|	(NEWLINE statements RCURLYBRACKET|if-expr-b| if-expr-c)
+list-expr			:	LSQUARE (expr (COMMA expr)*)? RSQUARE
 
-if-expr-b	:	KEYWORD:ELIF expr KEYWORD:THEN
-				(statement if-expr-b| if-expr-c?)
-			|	(NEWLINE statements RCURLYBRACKET|if-expr-b| if-expr-c)
+if-expr				:	KEYWORD:IF expr KEYWORD:THEN
+						(statement if-expr-b| if-expr-c?)
+					|	(NEWLINE statements RCURLYBRACKET|if-expr-b| if-expr-c)
 
-if-expr-c	:	KEYWORD:ELSE
-				statement
-			|	(NEWLINE statements RCURLYBRACKET)
+if-expr-b			:	KEYWORD:ELIF expr KEYWORD:THEN
+						(statement if-expr-b| if-expr-c?)
+					|	(NEWLINE statements RCURLYBRACKET|if-expr-b| if-expr-c)
 
-for-expr	:	KEYWORD:FOR IDENTIFIER EQ expr KEYWORD:TO expr
-				(KEYWORD:STEP)? KEYWORD:THEN
-				statement
-			|	(NEWLINE statements RCURLYBRACKET)
+if-expr-c			:	KEYWORD:ELSE
+						statement
+					|	(NEWLINE statements RCURLYBRACKET)
 
-while-expr	:	KEYWORD:WHILE expr KEYWORD:THEN
-				statement
-			|	(NEWLINE statements RCURLYBRACKET)
+for-expr			:	KEYWORD:FOR IDENTIFIER EQ expr KEYWORD:TO expr
+						(KEYWORD:STEP)? KEYWORD:THEN
+						statement
+					|	(NEWLINE statements RCURLYBRACKET)
 
-func-def	:	KEYWORD:FUNC IDENTIFIER?
-				LPARAM (IDENTIFIER (COMMA IDENTIFIER)*)? RPERAM
-				(ARROW expr)
-			|	(NEWLINE statements RCURLYBRACKET)
+while-expr			:	KEYWORD:WHILE expr KEYWORD:THEN
+						statement
+					|	(NEWLINE statements RCURLYBRACKET)
+
+func-def			:	KEYWORD:FUNC IDENTIFIER?
+						LPARAM (IDENTIFIER (COMMA IDENTIFIER)*)? RPERAM
+						(ARROW expr)
+					|	(NEWLINE statements RCURLYBRACKET)

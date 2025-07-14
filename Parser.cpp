@@ -123,11 +123,59 @@ ParseResult Parser::Statement()
 		return res.Success(std::make_unique<BreakNode>(posStart, currentToken.GetPosEnd().Copy()));
 	}
 
+	if (currentToken.GetType() == TT_HASH)
+	{
+		std::shared_ptr<Node> importStatement = res.Register(ImportStatement());
+		if (res.HasError())
+			return res;
+
+		return res.Success(importStatement);
+	}
+
 	std::shared_ptr<Node> expr = res.Register(Expr());
 	if (res.HasError())
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(', '[', 'IF', 'FOR', 'WHILE', 'FUNC', 'RETURN', 'CONTINUE', 'BREAK' or NOT"));
 
 	return res.Success(expr);
+}
+
+ParseResult Parser::ImportStatement()
+{
+	ParseResult res;
+	Position posStart = currentToken.GetPosStart().Copy();
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (!currentToken.Matches(TT_KEYWORD, "IMPORT"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'IMPORT'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_STRING)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected string for file path"));
+
+	Token filepathToken = currentToken;
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (!currentToken.Matches(TT_KEYWORD, "AS"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'AS'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_IDENTIFIER)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier as alias"));
+
+	std::string alias = std::get<std::string>(currentToken.GetValue());
+
+	Advance();
+	res.RegisterAdvancement();
+
+	return res.Success(std::make_unique<ImportNode>(filepathToken, alias, posStart, currentToken.GetPosEnd().Copy()));
 }
 
 ParseResult Parser::Expr()
@@ -314,7 +362,28 @@ ParseResult Parser::Atom()
 	{
 		Advance();
 		res.RegisterAdvancement();
-		return res.Success(std::make_shared<VarAccessNode>(tok));
+		
+
+		std::optional<std::string> moduleAlias = std::nullopt;
+		Token varNameTok = tok;
+
+		// Handle Test::func1 pattern
+		if (currentToken.GetType() == TT_DBLCOLON)
+		{
+			Advance();
+			res.RegisterAdvancement();
+
+			if (currentToken.GetType() != TT_IDENTIFIER)
+				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier after '::'"));
+
+			moduleAlias = std::get<std::string>(varNameTok.GetValue());
+			varNameTok = currentToken;
+
+			Advance();
+			res.RegisterAdvancement();
+		}
+
+		return res.Success(std::make_unique<VarAccessNode>(varNameTok, moduleAlias));
 	}
 	else if (tok.GetType() == TT_LPAREN)
 	{

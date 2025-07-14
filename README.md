@@ -8,10 +8,11 @@
 </div>
 
 <h2>How to run</h2>
+<h4>Download the <a href="https://github.com/eugenlukas/EugenPlusPlus/releases">latest</a> Eugen++ installer or Eugen++ directly and install/save it</43>
 
 <h3>Run file</h3>
 <h6>When .epp files are not associated with Eugen++.exe</h6>
-<h6>.\Eugen++.exe can very depending on where Eugen++.exe is located in storage</h6>
+<h6>.\Eugen++.exe can vary depending on where Eugen++.exe is located in storage</h6>
 
 ~~~
  .\Eugen++.exe F:\EugenPlusPlusTestFile.epp 
@@ -19,7 +20,7 @@
 
  <h3>Use in console</h3>
  <h6>Run the eugen++.exe normally via double click or per console</h6>
- <h6>.\Eugen++.exe can very depending on where Eugen++.exe is located in storage</h6>
+ <h6>.\Eugen++.exe can vary depending on where Eugen++.exe is located in storage</h6>
 
  ~~~
  .\Eugen++.exe
@@ -338,4 +339,37 @@ WHILE i < 10 THEN
 a
 
 >[0, 1, 2, 3, 5, 6, 7]
+~~~
+
+<h3>Import other files</h3>
+<h6>Relative paths for files are also possible</h6>
+
+<h4>Use functions</h4>
+
+<small>Main.epp</small>
+~~~
+# IMPORT "F:\\Test.epp" AS Test
+
+Test::add(5, 6)
+>11
+~~~
+
+<small>Test.epp</small>
+~~~
+FUNC add(a,b) -> a + b
+~~~
+
+<h4>Use variables</h4>
+
+<small>Main.epp</small>
+~~~
+# IMPORT "F:\\Test.epp" AS Test
+
+Test::name
+>Paul
+~~~
+
+<small>Test.epp</small>
+~~~
+VAR name = "Paul"
 ~~~

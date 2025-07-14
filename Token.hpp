@@ -32,13 +32,15 @@ constexpr char TT_AT[]				= "AT";
 constexpr char TT_ARROW[]			= "ARROW";
 constexpr char TT_NEWLINE[]			= "NEWLINE";
 constexpr char TT_RCURLYBRACKET[]	= "RCURLYBRACKET";
+constexpr char TT_HASH[]			= "HASH";
+constexpr char TT_DBLCOLON[]		= "DBLCONON";
 constexpr char TT_EOF[]				= "EOF";
 
 constexpr char DIGITS[]				= "0123456789";
 constexpr char LETTERS[]			= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 constexpr char LETTERS_DIGITS[]		= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-const std::array<std::string, 16> KEYWORDS = {
+const std::array<std::string, 18> KEYWORDS = {
 	"VAR",
 	"AND",
 	"OR",
@@ -54,7 +56,9 @@ const std::array<std::string, 16> KEYWORDS = {
 	"FUNC",
 	"RETURN",
 	"CONTINUE",
-	"BREAK"
+	"BREAK",
+	"IMPORT",
+	"AS"
 };
 
 class Token

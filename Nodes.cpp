@@ -55,9 +55,10 @@ std::string UnaryOpNode::Repr()
 	return "(" + opToken.Repr() + ", " + node->Repr() + ")";
 }
 
-VarAccessNode::VarAccessNode(Token varNameTok)
+VarAccessNode::VarAccessNode(Token varNameTok, std::optional<std::string> moduleAlias)
 {
 	this->varNameTok = varNameTok;
+	this->moduleAlias = moduleAlias;
 
 	posStart = this->varNameTok.GetPosStart();
 	posEnd = this->varNameTok.GetPosEnd();
@@ -265,6 +266,19 @@ BreakNode::BreakNode(Position posStart, Position posEnd)
 }
 
 std::string BreakNode::Repr()
+{
+	return std::string();
+}
+
+ImportNode::ImportNode(Token filepathToken, std::string alias, Position posStart, Position posEnd)
+{
+	this->filepathToken = filepathToken;
+	this->alias = alias;
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+}
+
+std::string ImportNode::Repr()
 {
 	return std::string();
 }

@@ -1,5 +1,10 @@
 #include "Interpreter.hpp"
 #include <functional>
+#include <fstream>
+#include <sstream>
+#include "Lexer.hpp"
+#include "Parser.hpp"
+#include <filesystem>
 
 RTResult Interpreter::Visit(std::shared_ptr<Node> node)
 {
@@ -33,6 +38,8 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
         return Visit_ContinueNode(*continue_);
     if (auto break_ = dynamic_cast<BreakNode*>(node.get()))
         return Visit_BreakNode(*break_);
+    if (auto import_ = dynamic_cast<ImportNode*>(node.get()))
+        return Visit_ImportNode(*import_);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
 }
@@ -253,6 +260,29 @@ RTResult Interpreter::Visit_VarAccessNode(VarAccessNode& node)
     RTResult res;
 
     std::string varName = std::get<std::string>(node.GetVarNameToken().GetValue());
+
+    // If namespaced (like Test::func1)
+    if (node.IsNamespaced())
+    {
+        std::string moduleAlias = node.GetModuleAlias().value();
+
+        auto it = importedModules.find(moduleAlias);
+        if (it == importedModules.end())
+        {
+            return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Module '" + moduleAlias + "' not found"));
+        }
+
+        auto moduleSymbols = it->second;
+        auto value = moduleSymbols->Get(varName);
+        if (!value.has_value())
+        {
+            return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "'" + varName + "' not found in module '" + moduleAlias + "'"));
+        }
+
+        return res.Success(value);
+    }
+
+    // Normal access
     auto value = symbolTable.Get(varName);
 
     if (!value.has_value())
@@ -437,12 +467,28 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
 {
     RTResult res;
     std::string funcName;
+    std::optional<std::string> moduleAlias;
+    std::optional<SymbolValue> funcValue;
+
     if (auto varAccess = dynamic_cast<VarAccessNode*>(node.GetNodeToCall().get()))
+    {
         funcName = std::get<std::string>(varAccess->GetVarNameToken().GetValue());
+        moduleAlias = varAccess->GetModuleAlias();
+
+        if (moduleAlias.has_value())
+        {
+            auto it = importedModules.find(*moduleAlias);
+            if (it == importedModules.end())
+                return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Module '" + *moduleAlias + "' not found"));
+
+            funcValue = it->second->Get(funcName);
+        }
+        else
+            funcValue = symbolTable.Get(funcName);
+    }
     else
         return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Invalid function name"));
 
-    auto funcValue = symbolTable.Get(funcName);
     if (!funcValue.has_value())
         return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Function '" + funcName + "' not found"));
 
@@ -545,6 +591,59 @@ RTResult Interpreter::Visit_ContinueNode(ContinueNode& node)
 RTResult Interpreter::Visit_BreakNode(BreakNode& node)
 {
     return RTResult().SuccessBreak();
+}
+
+RTResult Interpreter::Visit_ImportNode(ImportNode& node)
+{
+    RTResult res;
+
+    // 2. Resolve full path
+    std::filesystem::path filePath(std::get<std::string>(node.GetFilepathToken().GetValue()));
+    std::filesystem::path MainFilePath = mainFilePath;
+
+    // If path is relative, resolve it based on importing file's directory
+    if (!filePath.is_absolute())
+        filePath = MainFilePath.parent_path().string() + "\\" + std::get<std::string>(node.GetFilepathToken().GetValue());
+
+    // Normalize (e.g. resolve "..", ".")
+    filePath = std::filesystem::canonical(filePath);
+
+    // 2. Read file
+    std::ifstream file(filePath);
+    if (!file.is_open())
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Could not open import file: " + filePath.string()));
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string fileContent = buffer.str();
+    file.close();
+
+    // 3. Lex & parse file
+    Lexer lexer(filePath.string(), fileContent);
+    auto lexResult = lexer.MakeTokens();
+    if (lexResult.error != nullptr)
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), lexResult.error->AsString()));
+
+    Parser parser(lexResult.tokens);
+    auto parseResult = parser.Parse();
+    if (parseResult.HasError())
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), parseResult.GetError()));
+
+    std::shared_ptr<Node> tree = parseResult.GetNode();
+
+    // 4. Create a new symbol table for the import
+    auto importSymbolTable = std::make_shared<SymbolTable>(&symbolTable);
+
+    // 5. Interpret file content
+    Interpreter importInterpreter(*importSymbolTable);
+    RTResult importResult = importInterpreter.Visit(tree);
+    if (importResult.HasError())
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), importResult.GetError()));
+
+    // 6. Store the import symbol table under the alias
+    importedModules[node.GetAlias()] = importSymbolTable;
+
+    return res.Success(std::nullopt);
 }
 
 RTResult& RTResult::Success(std::optional<SymbolValue> value)

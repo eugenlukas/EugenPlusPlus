@@ -36,6 +36,18 @@ MakeTokensResult Lexer::MakeTokens()
 			if (result.has_value())
 				tokens.push_back(result.value());
 		}
+		else if (current_char == ':')
+		{
+			char illegalChar = current_char;
+			Position posStart = pos.Copy();
+
+			auto result = makeDblConon();
+
+			if (result.has_value())
+				tokens.push_back(result.value());
+			else
+				return MakeTokensResult({}, std::make_unique<IllegalCharError>(posStart, pos, "'" + std::string(1, current_char) + "'"));
+		}
 		else if (std::isdigit(current_char))
 			tokens.push_back(makeNumber());
 		else if (std::strchr(LETTERS, current_char))
@@ -120,6 +132,10 @@ MakeTokensResult Lexer::MakeTokens()
 				break;
 			case '}':
 				tokens.push_back(Token(TT_RCURLYBRACKET, std::nullopt, pos));
+				Advance();
+				break;
+			case '#':
+				tokens.push_back(Token(TT_HASH, std::nullopt, pos));
 				Advance();
 				break;
 			default:
@@ -324,4 +340,17 @@ std::optional<Token> Lexer::makeDivOrComment()
 	}
 
 	return Token(tokType, std::nullopt, posStart, pos);
+}
+
+std::optional<Token> Lexer::makeDblConon()
+{
+	Position posStart = pos.Copy();
+	Advance();
+
+	if (current_char != ':')
+		return std::nullopt;
+
+	Advance();
+
+	return Token(TT_DBLCOLON, std::nullopt, posStart, pos);
 }
