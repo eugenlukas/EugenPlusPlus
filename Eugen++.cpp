@@ -15,6 +15,7 @@ int main(int argc, char** argv)
     globalSymbolTable.Set("FALSE", static_cast<double>(0));
     globalSymbolTable.Set("MATH_PI", static_cast<double>(3.141592653589793));
     globalSymbolTable.Set("PRINT", std::make_shared<NativePrintFunction>());
+    globalSymbolTable.Set("PRINTLN", std::make_shared<NativePrintLnFunction>());
     globalSymbolTable.Set("LENGTH", std::make_shared<NativeLengthFunction>());
     globalSymbolTable.Set("INPUT_STR", std::make_shared<NativeInputStr>());
     globalSymbolTable.Set("INPUT_NUM", std::make_shared<NativeInputNum>());
@@ -27,6 +28,8 @@ int main(int argc, char** argv)
     globalSymbolTable.Set("EXTEND", std::make_shared<NativeExtend>());
     globalSymbolTable.Set("CLEAR", std::make_shared<NativeClear>());
     globalSymbolTable.Set("SYSTEM", std::make_shared<NativeSystem>());
+    globalSymbolTable.Set("RANDOM", std::make_shared<NativeRandom>());
+    globalSymbolTable.Set("RANDOMIZE", std::make_shared<NativeRandomize>());
 
     std::string text;
     bool loadedFromFile = false;

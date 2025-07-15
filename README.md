@@ -211,6 +211,7 @@ sub(70, 1)
 
 ~~~
 PRINT()			-takes in a string to output
+PRINTLN()		-takes in a string to output and goes to next line
 LENGTH()		-takes in a list
 INPUT_STR()		-promts the user to input some text
 INPUT_NUM()		-prompts the user to input some number when fails asks the user to type again
@@ -223,6 +224,8 @@ POP()			-takes in a list and a number as index
 EXTEND()		-takes in two lists
 CLEAR()			-clears the console
 SYSTEM()		-takes in a string as command
+RANDOM()		-takes in a min and max value (both inclusive)
+RANDOMIZE()		-seeds the randomizer (optionally takes in a number as seed)
 ~~~
 
 <h3>Multi-line statements</h3>
@@ -237,13 +240,13 @@ VAR result = IF 5 == 5 THEN "math works" ELSE "no"
 ~~~
 
 ~~~
-IF 5 == 5 THEN; PRINT("math"); PRINT("works") ELSE PRINT("broken")
+IF 5 == 5 THEN; PRINTLN("math"); PRINTLN("works") ELSE PRINT("broken")
 >math
 >works
 ~~~
 
 ~~~
-FOR i = 1 TO 6 THEN; PRINT("Hello "); PRINT("World") }
+FOR i = 1 TO 6 THEN; PRINTLN("Hello "); PRINTLN("World") }
 >Hello
 >World
 >Hello
@@ -258,7 +261,7 @@ FOR i = 1 TO 6 THEN; PRINT("Hello "); PRINT("World") }
 
 ~~~
 VAR i = 0
-WHILE i < 10 THEN; VAR i = i + 1; PRINT(i) }
+WHILE i < 10 THEN; VAR i = i + 1; PRINTLN(i) }
 >1
 >2
 >3

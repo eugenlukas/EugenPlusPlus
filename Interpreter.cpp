@@ -522,6 +522,7 @@ RTResult Interpreter::Visit_CallNode(CallNode& node)
 
         // Execute function body
         Interpreter funcInterpreter(localSymbolTable);
+        funcInterpreter.SetMainFilePath(mainFilePath);
         auto result = funcInterpreter.Visit(funcNodePtr->GetBodyNode());
         if (result.HasError()) return result;
         if (result.GetLoopShouldBreak() || result.GetLoopShouldContinue())
@@ -597,7 +598,6 @@ RTResult Interpreter::Visit_ImportNode(ImportNode& node)
 {
     RTResult res;
 
-    // 2. Resolve full path
     std::filesystem::path filePath(std::get<std::string>(node.GetFilepathToken().GetValue()));
     std::filesystem::path MainFilePath = mainFilePath;
 
@@ -605,10 +605,12 @@ RTResult Interpreter::Visit_ImportNode(ImportNode& node)
     if (!filePath.is_absolute())
         filePath = MainFilePath.parent_path().string() + "\\" + std::get<std::string>(node.GetFilepathToken().GetValue());
 
+    if (!std::filesystem::exists(filePath))
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Import file not found: " + filePath.string()));
+
     // Normalize (e.g. resolve "..", ".")
     filePath = std::filesystem::canonical(filePath);
 
-    // 2. Read file
     std::ifstream file(filePath);
     if (!file.is_open())
         return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Could not open import file: " + filePath.string()));
@@ -618,7 +620,6 @@ RTResult Interpreter::Visit_ImportNode(ImportNode& node)
     std::string fileContent = buffer.str();
     file.close();
 
-    // 3. Lex & parse file
     Lexer lexer(filePath.string(), fileContent);
     auto lexResult = lexer.MakeTokens();
     if (lexResult.error != nullptr)
@@ -631,16 +632,14 @@ RTResult Interpreter::Visit_ImportNode(ImportNode& node)
 
     std::shared_ptr<Node> tree = parseResult.GetNode();
 
-    // 4. Create a new symbol table for the import
     auto importSymbolTable = std::make_shared<SymbolTable>(&symbolTable);
 
-    // 5. Interpret file content
     Interpreter importInterpreter(*importSymbolTable);
+    importInterpreter.SetMainFilePath(filePath.string());
     RTResult importResult = importInterpreter.Visit(tree);
     if (importResult.HasError())
         return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), importResult.GetError()));
 
-    // 6. Store the import symbol table under the alias
     importedModules[node.GetAlias()] = importSymbolTable;
 
     return res.Success(std::nullopt);

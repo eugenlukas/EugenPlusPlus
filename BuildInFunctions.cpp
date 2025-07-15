@@ -10,6 +10,18 @@ RTResult NativePrintFunction::Execute(std::vector<std::variant<double, std::stri
         std::cout << Helper::Print(res.Success(arg));
     }
 
+    return res.Success(std::nullopt);
+}
+
+RTResult NativePrintLnFunction::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+{
+    RTResult res;
+
+    for (const auto& arg : args)
+    {
+        std::cout << Helper::Print(res.Success(arg));
+    }
+
     std::cout << std::endl;
     return res.Success(std::nullopt);
 }
@@ -240,6 +252,54 @@ RTResult NativeSystem::Execute(std::vector<std::variant<double, std::string, std
     }
 
     system(std::get<std::string>(args[0]).c_str());
+
+    return res.Success(std::nullopt);
+}
+
+RTResult NativeRandom::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+{
+    RTResult res;
+
+    if (args.size() != 2)
+    {
+        return res.Failure(std::make_unique<RuntimeError>(Position(), Position(), "RANDOM() takes exactly 2 arguments"));
+    }
+
+    if (!std::holds_alternative<double>(args[0]))
+    {
+        return res.Failure(std::make_unique<RuntimeError>(Position(), Position(), "First argument must be a number"));
+    }
+
+    if (!std::holds_alternative<double>(args[1]))
+    {
+        return res.Failure(std::make_unique<RuntimeError>(Position(), Position(), "Second argument must be a number"));
+    }
+
+    int min = std::get<double>(args[0]);
+    int max = std::get<double>(args[1]);
+    int randVal = min + (std::rand() % (max - min + 1));
+
+    return res.Success(static_cast<double>(randVal));
+}
+
+RTResult NativeRandomize::Execute(std::vector<std::variant<double, std::string, std::shared_ptr<FuncDefNode>, std::shared_ptr<List>, std::shared_ptr<BaseFunction>>> args)
+{
+    RTResult res;
+
+    if (args.size() > 1)
+    {
+        return res.Failure(std::make_unique<RuntimeError>(Position(), Position(), "RANDOMIZE() takes no arguments or a number as seed"));
+    }
+
+    if (args.size() == 1)
+    {
+        if (std::holds_alternative<double>(args[0]))
+            std::srand(static_cast<unsigned int>(std::get<double>(args[0])));
+        else
+            return res.Failure(std::make_unique<RuntimeError>(Position(), Position(), "Seed must be a number"));
+    }
+    else
+        std::srand(static_cast<unsigned int>(std::time(nullptr)));
 
     return res.Success(std::nullopt);
 }
