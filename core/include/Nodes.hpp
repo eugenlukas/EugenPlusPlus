@@ -1,6 +1,7 @@
 #pragma once
 #include "Token.hpp"
 #include <vector>
+#include <memory>
 
 class Node
 {

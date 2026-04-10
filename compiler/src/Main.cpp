@@ -6,6 +6,7 @@
 #include "Interpreter.hpp"
 #include <fstream>
 #include <filesystem>
+#include <algorithm>
 
 int main(int argc, char** argv)
 {
@@ -76,7 +77,7 @@ int main(int argc, char** argv)
 
         if (tokenResult.error != nullptr)
         {
-            std::cout << tokenResult.error->AsString() << std::endl;
+            std::cout << Helper::GetErrorString(tokenResult.error.get()) << std::endl;
 
             if (!loadedFromFile)
                 continue;
@@ -94,7 +95,7 @@ int main(int argc, char** argv)
 
         if (ast.HasError())
         {
-            std::cout << ast.GetError() << std::endl;
+            std::cout << Helper::GetErrorString(ast.GetErrorPtr()) << std::endl;
 
             if (!loadedFromFile)
                 continue;

@@ -1,6 +1,7 @@
 #pragma once
 #include <iostream>
 #include <vector>
+#include <memory>
 #include "Token.hpp"
 #include "Error.hpp"
 #include "Position.hpp"

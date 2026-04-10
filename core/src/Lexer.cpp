@@ -1,6 +1,8 @@
 #include "Lexer.hpp"
 #include <string>
 #include <unordered_map>
+#include <cstring>
+#include <algorithm>
 
 Lexer::Lexer(const std::string& fn, const std::string& text)
 {

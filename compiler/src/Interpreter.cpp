@@ -5,6 +5,8 @@
 #include "Lexer.hpp"
 #include "Parser.hpp"
 #include <filesystem>
+#include <Helper.hpp>
+#include <cmath>
 
 RTResult Interpreter::Visit(std::shared_ptr<Node> node)
 {
@@ -623,12 +625,12 @@ RTResult Interpreter::Visit_ImportNode(ImportNode& node)
     Lexer lexer(filePath.string(), fileContent);
     auto lexResult = lexer.MakeTokens();
     if (lexResult.error != nullptr)
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), lexResult.error->AsString()));
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), Helper::GetErrorString(lexResult.error.get())));
 
     Parser parser(lexResult.tokens);
     auto parseResult = parser.Parse();
     if (parseResult.HasError())
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), parseResult.GetError()));
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), Helper::GetErrorString(parseResult.GetErrorPtr())));
 
     std::shared_ptr<Node> tree = parseResult.GetNode();
 
@@ -638,7 +640,7 @@ RTResult Interpreter::Visit_ImportNode(ImportNode& node)
     importInterpreter.SetMainFilePath(filePath.string());
     RTResult importResult = importInterpreter.Visit(tree);
     if (importResult.HasError())
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), importResult.GetError()));
+        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), Helper::GetErrorString(importResult.GetError())));
 
     importedModules[node.GetAlias()] = importSymbolTable;
 

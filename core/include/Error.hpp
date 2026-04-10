@@ -7,8 +7,12 @@ class Error
 public:
 	Error();
 	Error(const Position& pos_start, const Position& pos_end, const std::string& error_name, const std::string& details);
+	virtual ~Error() = default;
 
-	std::string AsString();
+	Position GetPosStart() const { return pos_start; }
+	Position GetPosEnd() const { return pos_end; }
+	std::string GetErrorName() const { return error_name; }
+	std::string GetErrorDetails() const { return details; }
 
 private:
 	Position pos_start;

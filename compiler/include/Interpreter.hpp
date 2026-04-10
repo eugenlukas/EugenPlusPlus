@@ -93,7 +93,7 @@ public:
 	void Reset();
 
 	bool HasError() const { return error != nullptr; }
-	std::string GetError() const { return error->AsString(); }
+	Error* GetError() const { return error.get(); }
 
 	std::optional<SymbolValue> GetValue() const { return value; }
 	void SetValue(std::optional<SymbolValue> v) { value = v; }

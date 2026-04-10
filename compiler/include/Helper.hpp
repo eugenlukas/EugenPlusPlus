@@ -106,6 +106,14 @@ public:
             return "";
     }
 
+    static std::string GetErrorString(Error* const & error)
+    {
+        std::string result = "File " + error->GetPosStart().GetFileName() + ", line " + std::to_string(error->GetPosStart().GetLineNumber() + 1);
+	    result += "\n" + error->GetErrorName() + ": " + error->GetErrorDetails();
+	    result += "\n\n" + Helper::StringWithArrows(error->GetPosStart().GetFileContent(), error->GetPosStart(), error->GetPosEnd());
+	    return result;
+    }
+
     static bool argv_has(int argc, char* argv[], const std::string& target)
     {
         for (int i = 1; i < argc; ++i)

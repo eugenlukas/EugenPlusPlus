@@ -45,7 +45,6 @@ public:
 	bool HasError() const { return error != nullptr; }
 
 	std::shared_ptr<Node> GetNode() const { return node; }
-	std::string GetError() const { return error->AsString(); }
 	Error* GetErrorPtr() { return error.get(); }
 	int GetAdvancementCount() const { return advancementCount; }
 	int GetToReverseCount() const { return toReverseCount; }
