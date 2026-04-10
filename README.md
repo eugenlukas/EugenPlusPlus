@@ -26,13 +26,32 @@
  .\Eugen++.exe
  ~~~
 
- <h3>Possible arguments to pass through the exe</h3>
+ <h3>(Possible) arguments to pass through the exe</h3>
 
  ~~~
- filepath		-run file directly (must be at the first position when used)
+ filepath		-run file directly (must be at the first position)
  --tokens		-shows all tokens
  --ast			-abstract syntax tree
  ~~~
 
 <h2>Syntax</h2>
 <h4>Read the <a href="https://eugenlukas.de/pages/EugenPlusPlus_Documentation/docs/intro">official documentation</a>.</h4>
+
+<h2>How to build the compiler</h2>
+<h3>Example on Arch Linux with git</h3>
+
+~~~
+git clone https://github.com/eugenlukas/EugenPlusPlus.git
+cd EugenPlusPlus
+mkdir out
+cd out
+cmake ..
+make
+~~~
+
+<h3>Dpendencies</h3>
+<ul>
+<li>cmake</li>
+<li>g++</li>
+<li>llvm</li>
+</ul>
