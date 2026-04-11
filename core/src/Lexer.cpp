@@ -23,9 +23,6 @@ void Lexer::Advance()
 
 MakeTokensResult Lexer::MakeTokens()
 {
-
-	//std::cout << "Make tokens with input: '" << text << "'" << std::endl;
-
 	std::vector<Token> tokens;
 
 	while (current_char != '\0')
@@ -88,6 +85,10 @@ MakeTokensResult Lexer::MakeTokens()
 				break;
 			case '^':
 				tokens.push_back(Token(TT_POW, std::nullopt, pos));
+				Advance();
+				break;
+			case '%':
+				tokens.push_back(Token(TT_MOD, std::nullopt, pos));
 				Advance();
 				break;
 			case '(':

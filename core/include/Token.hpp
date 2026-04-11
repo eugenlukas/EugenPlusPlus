@@ -16,6 +16,7 @@ constexpr char TT_MINUS[]			= "MINUS";
 constexpr char TT_MUL[]				= "MUL";
 constexpr char TT_DIV[]				= "DIV";
 constexpr char TT_POW[]				= "POW";
+constexpr char TT_MOD[]				= "MOD";
 constexpr char TT_EQ[]				= "EQ";
 constexpr char TT_LPAREN[]			= "LPAREN";
 constexpr char TT_RPAREN[]			= "RPAREN";
@@ -40,25 +41,29 @@ constexpr char DIGITS[]				= "0123456789";
 constexpr char LETTERS[]			= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 constexpr char LETTERS_DIGITS[]		= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-const std::array<std::string, 18> KEYWORDS = {
-	"VAR",
-	"AND",
-	"OR",
-	"NOT",
-	"IF",
-	"THEN",
-	"ELIF",
-	"ELSE",
-	"FOR",
-	"TO",
-	"STEP",
-	"WHILE",
-	"FUNC",
-	"RETURN",
-	"CONTINUE",
-	"BREAK",
-	"IMPORT",
-	"AS"
+const std::array<std::string, 22> KEYWORDS = {
+	"var",
+	"and",
+	"or",
+	"not",
+	"if",
+	"then",
+	"elif",
+	"else",
+	"for",
+	"to",
+	"step",
+	"while",
+	"func",
+	"ref",
+	"return",
+	"continue",
+	"break",
+	"module",
+	"as",
+	"link",
+	"extern",
+	"CSTRUCT"
 };
 
 class Token

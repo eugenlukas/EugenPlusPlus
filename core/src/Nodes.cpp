@@ -55,10 +55,10 @@ std::string UnaryOpNode::Repr()
 	return "(" + opToken.Repr() + ", " + node->Repr() + ")";
 }
 
-VarAccessNode::VarAccessNode(Token varNameTok, std::optional<std::string> moduleAlias)
+VarAccessNode::VarAccessNode(Token varNameTok, std::optional<std::string> namespaceName)
 {
 	this->varNameTok = varNameTok;
-	this->moduleAlias = moduleAlias;
+	this->namespaceName = namespaceName;
 
 	posStart = this->varNameTok.GetPosStart();
 	posEnd = this->varNameTok.GetPosEnd();
@@ -69,10 +69,12 @@ std::string VarAccessNode::Repr()
 	return "(" + varNameTok.Repr() + ")";
 }
 
-VarAssignNode::VarAssignNode(Token varNameTok, std::shared_ptr<Node> node)
+VarAssignNode::VarAssignNode(Token varNameTok, std::shared_ptr<Node> node, bool isDeclaration, std::optional<std::string> namespaceName)
 {
 	this->varNameTok = varNameTok;
 	this->node = node;
+	this->isDeclaration = isDeclaration;
+	this->namespaceName = namespaceName;
 
 	posStart = this->varNameTok.GetPosStart();
 	posEnd = this->varNameTok.GetPosEnd();
@@ -121,7 +123,7 @@ IfNode::IfNode(std::vector<IfCase> cases, std::shared_ptr<Node> elseCase)
 
 std::string IfNode::Repr()
 {
-	std::string repr = "(IF ";
+	std::string repr = "(if ";
 
 	for (auto& ifCase : cases)
 	{
@@ -131,7 +133,7 @@ std::string IfNode::Repr()
 
 	if (elseCase != nullptr)
 	{
-		repr += "ELSE: " + elseCase->Repr();
+		repr += "else: " + elseCase->Repr();
 	}
 
 	repr += ")";
@@ -153,7 +155,7 @@ ForNode::ForNode(Token varNameTok, std::shared_ptr<Node> startValueNode, std::sh
 
 std::string ForNode::Repr()
 {
-	return std::string();
+	return "for node";
 }
 
 WhileNode::WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> bodyNode, bool shouldReturnNull)
@@ -168,10 +170,10 @@ WhileNode::WhileNode(std::shared_ptr<Node> conditionNode, std::shared_ptr<Node> 
 
 std::string WhileNode::Repr()
 {
-	return std::string();
+	return "while node";
 }
 
-FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn)
+FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<ArgNameToken> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn)
 {
 	this->varNameTok = varNameTok;
 	this->argNameToks = argNameToks;
@@ -181,7 +183,7 @@ FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> arg
 	if (varNameTok.has_value())
 		posStart = varNameTok.value().GetPosStart();
 	else if (argNameToks.size() > 0)
-		posStart = argNameToks[0].GetPosStart();
+		posStart = argNameToks[0].argNameTok.GetPosStart();
 	else
 		posStart = bodyNode->GetPosStart();
 
@@ -208,7 +210,7 @@ CallNode::CallNode(std::shared_ptr<Node> nodeToCall, std::vector<std::shared_ptr
 
 std::string CallNode::Repr()
 {
-	return std::string();
+	return "call node";
 }
 
 ListNode::ListNode()
@@ -245,7 +247,7 @@ ReturnNode::ReturnNode(std::optional<std::shared_ptr<Node>> nodeToReturn, Positi
 
 std::string ReturnNode::Repr()
 {
-	return std::string();
+	return "return node";
 }
 
 ContinueNode::ContinueNode(Position posStart, Position posEnd)
@@ -256,7 +258,7 @@ ContinueNode::ContinueNode(Position posStart, Position posEnd)
 
 std::string ContinueNode::Repr()
 {
-	return std::string();
+	return "continue node";
 }
 
 BreakNode::BreakNode(Position posStart, Position posEnd)
@@ -267,10 +269,10 @@ BreakNode::BreakNode(Position posStart, Position posEnd)
 
 std::string BreakNode::Repr()
 {
-	return std::string();
+	return "break node";
 }
 
-ImportNode::ImportNode(Token filepathToken, std::string alias, Position posStart, Position posEnd)
+ModuleNode::ModuleNode(Token filepathToken, std::string alias, Position posStart, Position posEnd)
 {
 	this->filepathToken = filepathToken;
 	this->alias = alias;
@@ -278,7 +280,45 @@ ImportNode::ImportNode(Token filepathToken, std::string alias, Position posStart
 	this->posEnd = posEnd;
 }
 
-std::string ImportNode::Repr()
+std::string ModuleNode::Repr()
 {
-	return std::string();
+	return "module node";
+}
+
+LinkNode::LinkNode(Token filepathToken, std::string alias, Position posStart, Position posEnd)
+{
+	this->filepathToken = filepathToken;
+	this->alias = alias;
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+}
+
+std::string LinkNode::Repr()
+{
+	return "link node";
+}
+
+ExternNode::ExternNode(std::string moduleAlias, std::string functionName, std::string signature, Position posStart, Position psoEnd)
+{
+	this->moduleAlias = moduleAlias;
+	this->functionName = functionName;
+	this->signature = signature;
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+}
+
+std::string ExternNode::Repr()
+{
+	return "extern node";
+}
+
+CStructDefNode::CStructDefNode(Token varNameTok, std::vector<CStructAttributeToken> attributeToks)
+{
+	this->varNameTok = varNameTok;
+	this->attributeToks = attributeToks;
+}
+
+std::string CStructDefNode::Repr()
+{
+	return "<CSTRUCT DEFINITION '" + std::get<std::string>(varNameTok.GetValue()) + "'>";
 }

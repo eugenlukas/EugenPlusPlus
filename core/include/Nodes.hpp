@@ -3,6 +3,23 @@
 #include <vector>
 #include <memory>
 
+struct ArgNameToken
+{
+	ArgNameToken(Token argNameTok, bool byReference) : argNameTok(argNameTok), byReference(byReference) {}
+
+	Token argNameTok;
+	bool byReference;
+};
+
+struct CStructAttributeToken
+{
+	CStructAttributeToken(std::string attributeType, std::string attributeName) : attributeType(attributeType), attributeName(attributeName) {}
+
+	std::string attributeType;
+	std::string attributeName;
+};
+
+
 class Node
 {
 public:
@@ -74,33 +91,37 @@ private:
 class VarAccessNode : public Node
 {
 public:
-	VarAccessNode(Token varNameTok, std::optional<std::string> moduleAlias);
+	VarAccessNode(Token varNameTok, std::optional<std::string> namespaceName);
 
 	std::string Repr() override;
 	Token GetVarNameToken() { return varNameTok; }
-	Position GetPosStart() { return posStart; }
-	Position GetPosEnd() { return posEnd; }
-	std::optional<std::string> GetModuleAlias() { return moduleAlias; }
+	std::optional<std::string> GetNamespaceName() { return namespaceName; }
 
-	bool IsNamespaced() const { return moduleAlias.has_value(); }
+	bool GetIsNamespaced() const { return namespaceName.has_value(); }
 
 private:
 	Token varNameTok;
-	std::optional<std::string> moduleAlias;
+	std::optional<std::string> namespaceName;
 };
 
 class VarAssignNode : public Node
 {
 public:
-	VarAssignNode(Token varNameTok, std::shared_ptr<Node> node);
+	VarAssignNode(Token varNameTok, std::shared_ptr<Node> node, bool isDeclaration, std::optional<std::string> namespaceName);
 
 	std::string Repr() override;
 	Token GetVarNameToken() { return varNameTok; }
 	std::shared_ptr<Node> GetValueNode() { return node; }
+	bool GetIsDeclaration() { return isDeclaration; }
+	std::optional<std::string> GetNamespaceName() { return namespaceName; }
+
+	bool GetIsNamespaced() const { return namespaceName.has_value(); }
 
 private:
 	Token varNameTok;
 	std::shared_ptr<Node> node;
+	bool isDeclaration;
+	std::optional<std::string> namespaceName;
 };
 
 class BinOpNode : public Node
@@ -188,17 +209,17 @@ private:
 class FuncDefNode : public Node
 {
 public:
-	FuncDefNode(std::optional<Token> varNameTok, std::vector<Token> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn);
+	FuncDefNode(std::optional<Token> varNameTok, std::vector<ArgNameToken> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn);
 
 	std::string Repr() override;
 	std::optional<Token> GetVarNameTok() { return varNameTok; }
-	std::vector<Token> GetArgNameToks() { return argNameToks; }
+	std::vector<ArgNameToken> ArgNameToks() { return argNameToks; }
 	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
 	bool GetShouldAutoReturn() const { return shouldAutoReturn; }
 
 private:
 	std::optional<Token> varNameTok;
-	std::vector<Token> argNameToks;
+	std::vector<ArgNameToken> argNameToks;
 	std::shared_ptr<Node> bodyNode;
 	bool shouldAutoReturn;
 };
@@ -245,10 +266,10 @@ public:
 	std::string Repr() override;
 };
 
-class ImportNode : public Node
+class ModuleNode : public Node
 {
 public:
-	ImportNode(Token filepathToken, std::string alias, Position posStart, Position posEnd);
+	ModuleNode(Token filepathToken, std::string alias, Position posStart, Position posEnd);
 
 	std::string Repr() override;
 	Token GetFilepathToken() { return filepathToken; }
@@ -257,4 +278,48 @@ public:
 private:
 	Token filepathToken;
 	std::string alias;
+};
+
+class LinkNode : public Node
+{
+public:
+	LinkNode(Token filepathToken, std::string alias, Position posStart, Position posEnd);
+
+	std::string Repr() override;
+	Token GetFilepathToken() { return filepathToken; }
+	std::string GetAlias() { return alias; }
+
+private:
+	Token filepathToken;
+	std::string alias;
+};
+
+class ExternNode : public Node
+{
+public:
+	ExternNode(std::string moduleAlias, std::string functionName, std::string signature, Position posStart, Position posEnd);
+
+	std::string Repr() override;
+	std::string GetModuleAlias() { return moduleAlias; }
+	std::string GetFunctionName() { return functionName; }
+	std::string GetSignature() { return signature; }
+
+private:
+	std::string moduleAlias;
+	std::string functionName;
+	std::string signature;
+};
+
+class CStructDefNode : public Node
+{
+public:
+	CStructDefNode(Token varNameTok, std::vector<CStructAttributeToken> attributeToks);
+
+	std::string Repr() override;
+	Token GetVarNameTok() { return varNameTok; }
+	std::vector<CStructAttributeToken> GetAttributeToks() { return attributeToks; }
+
+private:
+	Token varNameTok;
+	std::vector<CStructAttributeToken> attributeToks;
 };

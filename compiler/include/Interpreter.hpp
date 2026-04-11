@@ -144,5 +144,5 @@ private:
 	RTResult Visit_ReturnNode(ReturnNode& node);
 	RTResult Visit_ContinueNode(ContinueNode& node);
 	RTResult Visit_BreakNode(BreakNode& node);
-	RTResult Visit_ImportNode(ImportNode& node);
+	RTResult Visit_ImportNode(ModuleNode& node);
 };

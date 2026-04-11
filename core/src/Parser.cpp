@@ -23,6 +23,13 @@ Token Parser::Reverse(int amount)
 	return currentToken;
 }
 
+Token Parser::Peek(int offset)
+{
+    if (tokIdx + offset < tokens.size())
+		return tokens[tokIdx + offset];
+	return currentToken; // Return current token when out-of bounds
+}
+
 void Parser::UpdateCurrentToken()
 {
 	if (tokIdx >= 0 && tokIdx < tokens.size())
@@ -96,7 +103,7 @@ ParseResult Parser::Statement()
 	ParseResult res;
 	Position posStart = currentToken.GetPosStart().Copy();
 
-	if (currentToken.Matches(TT_KEYWORD, "RETURN"))
+	if (currentToken.Matches(TT_KEYWORD, "return"))
 	{
 		Advance();
 		res.RegisterAdvancement();
@@ -107,7 +114,7 @@ ParseResult Parser::Statement()
 		return res.Success(std::make_unique<ReturnNode>(expr, posStart, currentToken.GetPosEnd().Copy()));
 	}
 
-	if (currentToken.Matches(TT_KEYWORD, "CONTINUE"))
+	if (currentToken.Matches(TT_KEYWORD, "continue"))
 	{
 		Advance();
 		res.RegisterAdvancement();
@@ -115,7 +122,7 @@ ParseResult Parser::Statement()
 		return res.Success(std::make_unique<ContinueNode>(posStart, currentToken.GetPosEnd().Copy()));
 	}
 
-	if (currentToken.Matches(TT_KEYWORD, "BREAK"))
+	if (currentToken.Matches(TT_KEYWORD, "break"))
 	{
 		Advance();
 		res.RegisterAdvancement();
@@ -125,7 +132,7 @@ ParseResult Parser::Statement()
 
 	if (currentToken.GetType() == TT_HASH)
 	{
-		std::shared_ptr<Node> importStatement = res.Register(ImportStatement());
+		std::shared_ptr<Node> importStatement = res.Register(ModuleExternLinkStatement());
 		if (res.HasError())
 			return res;
 
@@ -134,21 +141,32 @@ ParseResult Parser::Statement()
 
 	std::shared_ptr<Node> expr = res.Register(Expr());
 	if (res.HasError())
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(', '[', 'IF', 'FOR', 'WHILE', 'FUNC', 'RETURN', 'CONTINUE', 'BREAK' or NOT"));
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, var, '+', '-', '(', '[', 'if', 'for', 'while', 'func', 'return', 'continue', 'break' or not"));
 
 	return res.Success(expr);
 }
 
-ParseResult Parser::ImportStatement()
+ParseResult Parser::ModuleExternLinkStatement()
 {
 	ParseResult res;
 	Position posStart = currentToken.GetPosStart().Copy();
+	bool link = false;
 
 	Advance();
 	res.RegisterAdvancement();
 
-	if (!currentToken.Matches(TT_KEYWORD, "IMPORT"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'IMPORT'"));
+	if (currentToken.Matches(TT_KEYWORD, "module"))
+		link = false;
+	else if (currentToken.Matches(TT_KEYWORD, "link"))
+		link = true;
+	else if (currentToken.Matches(TT_KEYWORD, "extern"))
+	{
+		std::shared_ptr<Node> externNode = res.Register(ExternStatement());
+		if (res.HasError()) return res;
+		return res.Success(externNode);
+	}
+	else
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'module', 'link' or 'extern'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -161,8 +179,8 @@ ParseResult Parser::ImportStatement()
 	Advance();
 	res.RegisterAdvancement();
 
-	if (!currentToken.Matches(TT_KEYWORD, "AS"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'AS'"));
+	if (!currentToken.Matches(TT_KEYWORD, "as"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'as'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -175,14 +193,68 @@ ParseResult Parser::ImportStatement()
 	Advance();
 	res.RegisterAdvancement();
 
-	return res.Success(std::make_unique<ImportNode>(filepathToken, alias, posStart, currentToken.GetPosEnd().Copy()));
+	if (!link)
+		return res.Success(std::make_unique<ModuleNode>(filepathToken, alias, posStart, currentToken.GetPosEnd().Copy()));
+	else
+		return res.Success(std::make_unique<LinkNode>(filepathToken, alias, posStart, currentToken.GetPosEnd().Copy()));
+}
+
+ParseResult Parser::ExternStatement()
+{
+	ParseResult res;
+	Position posStart = currentToken.GetPosStart().Copy();
+
+	if (!currentToken.Matches(TT_KEYWORD, "extern"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'extern'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_IDENTIFIER)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected module name identifier"));
+
+	std::string moduleAlias = std::get<std::string>(currentToken.GetValue());
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_DBLCOLON)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '::' after module name"));
+
+	Advance(),
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_IDENTIFIER)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected function name identifier after '::'"));
+
+	std::string functionName = std::get<std::string>(currentToken.GetValue());
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (!currentToken.Matches(TT_KEYWORD, "as"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'as'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_STRING)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected signature string like \"int(int, int)\""));
+
+	std::string signature = std::get<std::string>(currentToken.GetValue());
+
+	Advance();
+	res.RegisterAdvancement();
+
+	return res.Success(std::make_unique<ExternNode>(moduleAlias, functionName, signature, posStart, currentToken.GetPosEnd().Copy()));
 }
 
 ParseResult Parser::Expr()
 {
 	ParseResult res;
 
-	if (currentToken.Matches(TT_KEYWORD, "VAR"))
+	// Handle var declaration
+	if (currentToken.Matches(TT_KEYWORD, "var"))
 	{
 		Advance();
 		res.RegisterAdvancement();
@@ -205,19 +277,41 @@ ParseResult Parser::Expr()
 		if (res.HasError())
 			return res;
 		else
-			return res.Success(std::make_shared<VarAssignNode>(varName, expr));
+			return res.Success(std::make_shared<VarAssignNode>(varName, expr, true, std::nullopt));
+	}
+
+	// Handle assignment
+	if (currentToken.GetType() == TT_IDENTIFIER && Peek().GetType() == TT_EQ)
+	{
+		Token varName = currentToken;
+
+		Advance();
+		res.RegisterAdvancement();
+
+		if (currentToken.GetType() != TT_EQ)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
+
+		Advance();
+		res.RegisterAdvancement();
+
+		auto expr = res.Register(Expr());
+
+		if (res.HasError())
+			return res;
+		else
+			return res.Success(std::make_shared<VarAssignNode>(varName, expr, false, std::nullopt));
 	}
 
 	std::vector<std::pair<std::string, std::string>> ops = {
-	{ TT_KEYWORD, "AND"},
-	{ TT_KEYWORD, "OR"}
+	{ TT_KEYWORD, "and"},
+	{ TT_KEYWORD, "or"}
 	};
 	std::shared_ptr<Node> node = res.Register(BinOp([this]() {return CompExpr(); }, ops));
 
 	if (res.HasError())
 	{
 		if (res.GetAdvancementCount() == 0 && !res.GetErrorPtr())
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(),"Expected int, float, identifier, VAR, '+', '-', '(', '[', 'IF', 'FOR', 'WHILE', 'FUNC' or NOT"));
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(),"Expected int, float, identifier, var, '+', '-', '(', '[', 'if', 'for', 'while', 'func' or not"));
 		return res;
 	}
 
@@ -228,7 +322,7 @@ ParseResult Parser::CompExpr()
 {
 	ParseResult res;
 
-	if (currentToken.Matches(TT_KEYWORD, "NOT"))
+	if (currentToken.Matches(TT_KEYWORD, "not"))
 	{
 		Token opToken = currentToken;
 
@@ -249,7 +343,7 @@ ParseResult Parser::CompExpr()
 	if (res.HasError())
 	{
 		if (res.GetAdvancementCount() == 0 && !res.GetErrorPtr())
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, VAR, '+', '-', '(', '[' or 'NOT'"));
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected int, float, identifier, var, '+', '-', '(', '[' or 'not'"));
 		return res;
 	}
 
@@ -264,7 +358,7 @@ ParseResult Parser::ArithExpr()
 
 ParseResult Parser::Term()
 {
-	std::vector<std::string> ops = { TT_MUL, TT_DIV };
+	std::vector<std::string> ops = { TT_MUL, TT_DIV, TT_MOD };
 	return BinOp([this]() {return Factor(); }, ops);
 }
 
@@ -316,7 +410,7 @@ ParseResult Parser::Call()
 		{
 			argNodes.push_back(res.Register(Expr()));
 			if (res.HasError())
-				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')', 'VAR', 'IF', 'FOR', 'WHILE', 'FUNC', 'int', 'float', identifier, '+', '-', '(', '[' or 'NOT'"));
+				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ')', 'var', 'if', 'for', 'while', 'func', 'int', 'float', identifier, '+', '-', '(', '[' or 'not'"));
 
 			while (currentToken.GetType() == TT_COMMA)
 			{
@@ -363,11 +457,9 @@ ParseResult Parser::Atom()
 		Advance();
 		res.RegisterAdvancement();
 		
-
-		std::optional<std::string> moduleAlias = std::nullopt;
 		Token varNameTok = tok;
 
-		// Handle Test::func1 pattern
+		// Handle Test::func1 and Test::varA = 100 pattern
 		if (currentToken.GetType() == TT_DBLCOLON)
 		{
 			Advance();
@@ -376,14 +468,29 @@ ParseResult Parser::Atom()
 			if (currentToken.GetType() != TT_IDENTIFIER)
 				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier after '::'"));
 
-			moduleAlias = std::get<std::string>(varNameTok.GetValue());
+			std::optional<std::string> namespaceName = std::get<std::string>(varNameTok.GetValue());
 			varNameTok = currentToken;
 
 			Advance();
 			res.RegisterAdvancement();
+
+			if (currentToken.GetType() != TT_EQ)
+				res.Success(std::make_unique<VarAccessNode>(varNameTok, namespaceName));
+			else // Handle var assignment through namespace
+			{
+				Advance();
+				res.RegisterAdvancement();
+
+				auto expr = res.Register(Expr());
+
+				if (res.HasError())
+					return res;
+				else
+					return res.Success(std::make_shared<VarAssignNode>(varNameTok, expr, false, namespaceName));
+			}
 		}
 
-		return res.Success(std::make_unique<VarAccessNode>(varNameTok, moduleAlias));
+		return res.Success(std::make_unique<VarAccessNode>(varNameTok, std::nullopt));
 	}
 	else if (tok.GetType() == TT_LPAREN)
 	{
@@ -409,36 +516,43 @@ ParseResult Parser::Atom()
 
 		return res.Success(listExpr);
 	}
-	else if (tok.Matches(TT_KEYWORD, "IF"))
+	else if (tok.Matches(TT_KEYWORD, "if"))
 	{
 		std::shared_ptr<Node> ifExpr = res.Register(IfExpr());
 		if (res.HasError())
 			return res;
 		return res.Success(ifExpr);
 	}
-	else if (tok.Matches(TT_KEYWORD, "FOR"))
+	else if (tok.Matches(TT_KEYWORD, "for"))
 	{
 		std::shared_ptr<Node> forExpr = res.Register(ForExpr());
 		if (res.HasError())
 			return res;
 		return res.Success(forExpr);
 	}
-	else if (tok.Matches(TT_KEYWORD, "WHILE"))
+	else if (tok.Matches(TT_KEYWORD, "while"))
 	{
 		std::shared_ptr<Node> whileExpr = res.Register(WhileExpr());
 		if (res.HasError())
 			return res;
 		return res.Success(whileExpr);
 	}
-	else if (tok.Matches(TT_KEYWORD, "FUNC"))
+	else if (tok.Matches(TT_KEYWORD, "func"))
 	{
 		std::shared_ptr<Node> funcDef = res.Register(FuncDef());
 		if (res.HasError())
 			return res;
 		return res.Success(funcDef);
 	}
+	else if (tok.Matches(TT_KEYWORD, "CSTRUCT"))
+	{
+		std::shared_ptr<Node> structDef = res.Register(CStructDef());
+		if (res.HasError())
+			return res;
+		return res.Success(structDef);
+	}
 
-	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-', '(', '[', 'IF', 'FOR', 'WHILE', 'FUNC'"));
+	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-', '(', '[', 'if', 'for', 'while', 'func' or 'CSTRUCT'"));
 }
 
 ParseResult Parser::ListExpr()
@@ -462,7 +576,7 @@ ParseResult Parser::ListExpr()
 	{
 		elementNodes.push_back(res.Register(Expr()));
 		if (res.HasError())
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']', 'VAR', 'IF', 'FOR', 'WHILE', 'FUNC', 'int', 'float', identifier, '+', '-', '(', '[' or 'NOT'"));
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']', 'var', 'if', 'for', 'while', 'func', 'int', 'float', identifier, '+', '-', '(', '[' or 'not'"));
 
 		while (currentToken.GetType() == TT_COMMA)
 		{
@@ -488,7 +602,7 @@ ParseResult Parser::IfExpr()
 {
 	ParseResult res;
 	CasesResult result;
-	res.Register(IfExprCases("IF", result));
+	res.Register(IfExprCases("if", result));
 	if (res.HasError()) return res;
 
 	return res.Success(std::make_shared<IfNode>(result.cases, result.elseCase));
@@ -497,14 +611,14 @@ ParseResult Parser::IfExpr()
 ParseResult Parser::IfExprB()
 {
 	CasesResult dummyResult;
-	return IfExprCases("ELIF", dummyResult);
+	return IfExprCases("elif", dummyResult);
 }
 
 ParseResult Parser::IfExprC(std::shared_ptr<IfCase>& outElseCase)
 {
 	ParseResult res;
 
-	if (currentToken.Matches(TT_KEYWORD, "ELSE"))
+	if (currentToken.Matches(TT_KEYWORD, "else"))
 	{
 		Advance();
 		res.RegisterAdvancement();
@@ -549,9 +663,9 @@ ParseResult Parser::IfExprBorC(CasesResult& outResult)
 {
 	ParseResult res;
 
-	if (currentToken.Matches(TT_KEYWORD, "ELIF"))
+	if (currentToken.Matches(TT_KEYWORD, "elif"))
 	{
-		res.Register(IfExprCases("ELIF", outResult));
+		res.Register(IfExprCases("elif", outResult));
 		if (res.HasError())
 			return res;
 	}
@@ -587,9 +701,9 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 	std::shared_ptr<Node> condition = res.Register(Expr());
 	if (res.HasError()) return res;
 
-	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
+	if (!currentToken.Matches(TT_KEYWORD, "then"))
 		return res.Failure(std::make_unique<InvalidSyntaxError>(
-			currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
+			currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'then'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -604,12 +718,19 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 
 		cases.push_back(IfCase(condition, body, true));
 
-		if (currentToken.GetType() == TT_RCURLYBRACKET)  // End of block
+		if (currentToken.GetType() != TT_RCURLYBRACKET)  // End of block
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '}'"));
+
+		Advance();
+		res.RegisterAdvancement();
+
+		if (currentToken.GetType() == TT_NEWLINE && !Peek().Matches(TT_KEYWORD, "if	"))
 		{
 			Advance();
 			res.RegisterAdvancement();
 		}
-		else
+
+		if (currentToken.Matches(TT_KEYWORD, "elif") || currentToken.Matches(TT_KEYWORD, "else"))
 		{
 			CasesResult subCases;
 			res.Register(IfExprBorC(subCases));
@@ -626,15 +747,19 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 
 		cases.push_back(IfCase(condition, expr, false));
 
-		CasesResult subCases;
-		res.Register(IfExprBorC(subCases));
-		if (res.HasError()) return res;
+		// Only continue chain if next token id elif or else	
+		if (currentToken.Matches(TT_KEYWORD, "elif") || currentToken.Matches(TT_KEYWORD, "else"))
+		{
+			CasesResult subCases;
+			res.Register(IfExprBorC(subCases));
+			if (res.HasError()) return res;
 
-		cases.insert(cases.end(), subCases.cases.begin(), subCases.cases.end());
-		elseCase = subCases.elseCase;
+			cases.insert(cases.end(), subCases.cases.begin(), subCases.cases.end());
+			elseCase = subCases.elseCase;
+		}
 	}
 
-	outResult.cases = cases;
+	outResult.cases.insert(outResult.cases.end(), cases.begin(), cases.end());
 	outResult.elseCase = elseCase;
 	return res.Success(nullptr);
 }
@@ -643,8 +768,8 @@ ParseResult Parser::ForExpr()
 {
 	ParseResult res;
 
-	if (!currentToken.Matches(TT_KEYWORD, "FOR"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'FOR'"));
+	if (!currentToken.Matches(TT_KEYWORD, "for"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'for'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -667,8 +792,8 @@ ParseResult Parser::ForExpr()
 	if (res.HasError())
 		return res;
 
-	if (!currentToken.Matches(TT_KEYWORD, "TO"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'TO'"));
+	if (!currentToken.Matches(TT_KEYWORD, "to"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'to'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -678,7 +803,7 @@ ParseResult Parser::ForExpr()
 		return res;
 
 	std::shared_ptr<Node> stepValue;
-	if (currentToken.Matches(TT_KEYWORD, "STEP"))
+	if (currentToken.Matches(TT_KEYWORD, "step"))
 	{
 		Advance();
 		res.RegisterAdvancement();
@@ -689,8 +814,8 @@ ParseResult Parser::ForExpr()
 	else
 		stepValue = nullptr;
 
-	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
+	if (!currentToken.Matches(TT_KEYWORD, "then"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'then'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -724,8 +849,8 @@ ParseResult Parser::WhileExpr()
 {
 	ParseResult res;
 
-	if (!currentToken.Matches(TT_KEYWORD, "WHILE"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'WHILE'"));
+	if (!currentToken.Matches(TT_KEYWORD, "while"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'while'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -734,8 +859,8 @@ ParseResult Parser::WhileExpr()
 	if (res.HasError())
 		return res;
 
-	if (!currentToken.Matches(TT_KEYWORD, "THEN"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'THEN'"));
+	if (!currentToken.Matches(TT_KEYWORD, "then"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'then'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -769,8 +894,8 @@ ParseResult Parser::FuncDef()
 {
 	ParseResult res;
 
-	if (!currentToken.Matches(TT_KEYWORD, "FUNC"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'FUNC'"));
+	if (!currentToken.Matches(TT_KEYWORD, "func"))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'func'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -797,11 +922,20 @@ ParseResult Parser::FuncDef()
 	Advance();
 	res.RegisterAdvancement();
 	
-	std::vector<Token> argNameToks;
+	bool argByReference = false;
+	std::vector<ArgNameToken> argNameToks;
+
+	if (currentToken.Matches(TT_KEYWORD, "ref"))
+	{
+		argByReference = true;
+
+		Advance();
+		res.RegisterAdvancement();
+	}
 
 	if (currentToken.GetType() == TT_IDENTIFIER)
 	{
-		argNameToks.push_back(currentToken);
+		argNameToks.push_back(ArgNameToken(currentToken, argByReference));
 
 		Advance();
 		res.RegisterAdvancement();
@@ -811,10 +945,20 @@ ParseResult Parser::FuncDef()
 			Advance();
 			res.RegisterAdvancement();
 
+			argByReference = false;
+
+			if (currentToken.Matches(TT_KEYWORD, "ref"))
+			{
+				argByReference = true;
+
+				Advance();
+				res.RegisterAdvancement();
+			}
+
 			if (currentToken.GetType() != TT_IDENTIFIER)
 				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
 
-			argNameToks.push_back(currentToken);
+			argNameToks.push_back(ArgNameToken(currentToken, argByReference));
 
 			Advance();
 			res.RegisterAdvancement();
@@ -863,6 +1007,72 @@ ParseResult Parser::FuncDef()
 	res.RegisterAdvancement();
 
 	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, body, false));
+}
+
+ParseResult Parser::CStructDef()
+{
+	ParseResult res;
+
+	if (!currentToken.Matches(TT_KEYWORD, "CSTRUCT"))
+		res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'CSTRUCT'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	Token varNameTok;
+	if (currentToken.GetType() == TT_IDENTIFIER)
+		varNameTok = currentToken;
+	else
+		res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_NEWLINE)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected NEWLINE"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	std::vector<CStructAttributeToken> attributeToks;
+
+	while (currentToken.GetType() == TT_IDENTIFIER)
+	{
+		std::string attributeType = "";
+		std::string attributeName = "";
+
+		if (currentToken.GetType() != TT_IDENTIFIER)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected type as identifier"));
+		else
+			attributeType = std::get<std::string>(currentToken.GetValue());
+
+		Advance();
+		res.RegisterAdvancement();
+
+		if (currentToken.GetType() != TT_IDENTIFIER)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
+		else
+			attributeName = std::get<std::string>(currentToken.GetValue());
+
+		Advance();
+		res.RegisterAdvancement();
+
+		if (currentToken.GetType() != TT_NEWLINE)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected NEWLINE"));
+
+		Advance();
+		res.RegisterAdvancement();
+
+		attributeToks.push_back(CStructAttributeToken(attributeType, attributeName));
+	}
+
+	if (currentToken.GetType() != TT_RCURLYBRACKET)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '}'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	return res.Success(std::make_shared<CStructDefNode>(varNameTok, attributeToks));
 }
 
 ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b)

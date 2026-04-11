@@ -68,7 +68,8 @@ public:
 	Parser(std::vector<Token> tokens);
 
 	Token Advance();
-	Token Reverse(int amount=1);
+	Token Reverse(int amount = 1);
+	Token Peek(int offset = 1);
 
 	void UpdateCurrentToken();
 
@@ -76,7 +77,8 @@ public:
 
 	ParseResult Statements();
 	ParseResult Statement();
-	ParseResult ImportStatement();
+	ParseResult ModuleExternLinkStatement();
+	ParseResult ExternStatement();
 	ParseResult Expr();
 	ParseResult CompExpr();
 	ParseResult ArithExpr();
@@ -94,8 +96,9 @@ public:
 	ParseResult ForExpr();
 	ParseResult WhileExpr();
 	ParseResult FuncDef();
+	ParseResult CStructDef();
 
-	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b=nullptr);
+	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b = nullptr);
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::pair<std::string, std::string>> typeValueOps, std::function<ParseResult()> func_b = nullptr);
 
 private:

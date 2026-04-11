@@ -80,7 +80,9 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
     if (op == TT_MUL)
         return builder.CreateMul(left, right, "mulTmp");
     if (op == TT_DIV)
-        return builder.CreateSDiv(left, right, "divTmp");
+        return builder.CreateSDiv(left, right, "divTmp"); //Signed
+    if (op == TT_MOD)
+        return builder.CreateSRem(left, right, "sremTmp"); //Signed
 
     std::cerr << "Unknown binary operation\n";
     return nullptr;

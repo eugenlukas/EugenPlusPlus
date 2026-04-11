@@ -40,7 +40,7 @@ RTResult Interpreter::Visit(std::shared_ptr<Node> node)
         return Visit_ContinueNode(*continue_);
     if (auto break_ = dynamic_cast<BreakNode*>(node.get()))
         return Visit_BreakNode(*break_);
-    if (auto import_ = dynamic_cast<ImportNode*>(node.get()))
+    if (auto import_ = dynamic_cast<ModuleNode*>(node.get()))
         return Visit_ImportNode(*import_);
 
     return RTResult().Failure(std::make_unique<RuntimeError>(Position(), Position(), "Unknown node type"));
@@ -264,9 +264,9 @@ RTResult Interpreter::Visit_VarAccessNode(VarAccessNode& node)
     std::string varName = std::get<std::string>(node.GetVarNameToken().GetValue());
 
     // If namespaced (like Test::func1)
-    if (node.IsNamespaced())
+    if (node.GetIsNamespaced())
     {
-        std::string moduleAlias = node.GetModuleAlias().value();
+        std::string moduleAlias = node.GetNamespaceName().value();
 
         auto it = importedModules.find(moduleAlias);
         if (it == importedModules.end())
@@ -468,106 +468,10 @@ RTResult Interpreter::Visit_FuncDefNode(FuncDefNode& node)
 RTResult Interpreter::Visit_CallNode(CallNode& node)
 {
     RTResult res;
-    std::string funcName;
-    std::optional<std::string> moduleAlias;
-    std::optional<SymbolValue> funcValue;
 
-    if (auto varAccess = dynamic_cast<VarAccessNode*>(node.GetNodeToCall().get()))
-    {
-        funcName = std::get<std::string>(varAccess->GetVarNameToken().GetValue());
-        moduleAlias = varAccess->GetModuleAlias();
+    // Deleted
 
-        if (moduleAlias.has_value())
-        {
-            auto it = importedModules.find(*moduleAlias);
-            if (it == importedModules.end())
-                return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Module '" + *moduleAlias + "' not found"));
-
-            funcValue = it->second->Get(funcName);
-        }
-        else
-            funcValue = symbolTable.Get(funcName);
-    }
-    else
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Invalid function name"));
-
-    if (!funcValue.has_value())
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Function '" + funcName + "' not found"));
-
-    // Handle user-defined functions
-    if (std::holds_alternative<std::shared_ptr<FuncDefNode>>(funcValue.value()))
-    {
-        auto funcNodePtr = std::get<std::shared_ptr<FuncDefNode>>(funcValue.value());
-
-        if (node.GetArgNodes().size() != funcNodePtr->GetArgNameToks().size())
-            return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Incorrect number of arguments"));
-
-        // Save current symbol table
-        SymbolTable localSymbolTable(&symbolTable);
-
-        // Assign arguments
-        for (size_t i = 0; i < node.GetArgNodes().size(); ++i)
-        {
-            auto argRes = Visit(node.GetArgNodes()[i]);
-            if (argRes.ShouldReturn()) return argRes;
-
-            std::string argName = std::get<std::string>(funcNodePtr->GetArgNameToks()[i].GetValue());
-            auto argResVal = argRes.GetValue().value();
-
-            if (std::holds_alternative<double>(argResVal))
-                localSymbolTable.Set(argName, std::get<double>(argResVal));
-            else if (std::holds_alternative<std::string>(argResVal))
-                localSymbolTable.Set(argName, std::get<std::string>(argResVal));
-            else if (std::holds_alternative<std::shared_ptr<List>>(argResVal))
-                localSymbolTable.Set(argName, std::get<std::shared_ptr<List>>(argResVal));
-        }
-
-        // Execute function body
-        Interpreter funcInterpreter(localSymbolTable);
-        funcInterpreter.SetMainFilePath(mainFilePath);
-        auto result = funcInterpreter.Visit(funcNodePtr->GetBodyNode());
-        if (result.HasError()) return result;
-        if (result.GetLoopShouldBreak() || result.GetLoopShouldContinue())
-            return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Cannot use 'break' or 'continue' outside of a loop"));
-
-        if (result.GetFuncReturnValue().has_value())
-            return res.Success(result.GetFuncReturnValue());
-        else if (funcNodePtr->GetShouldAutoReturn())
-            return res.Success(result.GetValue());
-        else
-            return res.Success(std::nullopt);
-    }
-    // Handle built-in functions
-    else if (std::holds_alternative<std::shared_ptr<BaseFunction>>(funcValue.value()))
-    {
-        auto func = std::get<std::shared_ptr<BaseFunction>>(funcValue.value());
-
-        std::vector<SymbolValue> args;
-        for (auto& argNode : node.GetArgNodes())
-        {
-            auto argRes = Visit(argNode);
-            if (argRes.ShouldReturn()) return argRes;
-
-            auto val = argRes.GetValue().value();
-            if (std::holds_alternative<double>(val) || std::holds_alternative<std::string>(val) || std::holds_alternative<std::shared_ptr<List>>(val) || std::holds_alternative<std::shared_ptr<BaseFunction>>(val) || std::holds_alternative<std::shared_ptr<FuncDefNode>>(val))
-            {
-                args.push_back(val);
-            }
-            else
-            {
-                return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Unsupported argument type for built-in function"));
-            }
-        }
-
-        auto result = func->Execute(args);
-        if (result.ShouldReturn()) return result;
-
-        return res.Success(result.GetValue());
-    }
-    else
-    {
-        return res.Failure(std::make_unique<RuntimeError>(node.GetPosStart(), node.GetPosEnd(), "Function '" + funcName + "' not callable"));
-    }
+    return res;
 }
 
 RTResult Interpreter::Visit_ReturnNode(ReturnNode& node)
@@ -596,7 +500,7 @@ RTResult Interpreter::Visit_BreakNode(BreakNode& node)
     return RTResult().SuccessBreak();
 }
 
-RTResult Interpreter::Visit_ImportNode(ImportNode& node)
+RTResult Interpreter::Visit_ImportNode(ModuleNode& node)
 {
     RTResult res;
 
