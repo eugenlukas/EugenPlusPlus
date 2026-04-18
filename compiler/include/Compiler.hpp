@@ -4,6 +4,7 @@
 #include <string>
 #include <iostream>
 #include <map>
+#include <unordered_set>
 
 #include <Nodes.hpp>
 #include <BuiltinFunctions.hpp>
@@ -25,6 +26,12 @@
 #include <llvm/Support/CodeGen.h> 
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+
+struct VarInfo
+{
+    llvm::AllocaInst* alloca;
+    bool isHeapAllocated;
+};
 
 class Compiler
 {
@@ -49,7 +56,8 @@ private:
     llvm::IRBuilder<> builder;
     std::unique_ptr<llvm::Module> module;
 
-    std::map<std::string, llvm::AllocaInst*> m_namedValues;
+    std::map<std::string, VarInfo> m_namedValues;
+    std::unordered_set<llvm::Value*> m_heapValues;
     std::map<std::string, llvm::Function*> m_functions;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
 
@@ -76,6 +84,8 @@ private:
 	//void Visit_ContinueNode(ContinueNode& node);
 	//void Visit_BreakNode(BreakNode& node);
 	//void Visit_ImportNode(ImportNode& node);
+
+    void FreeLocalHeapValues();
 
     void DeclareConcat();
     void DeclareIntToStr();

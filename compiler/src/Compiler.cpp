@@ -193,14 +193,18 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
         // string + string
         if (leftTy == strTy && rightTy == strTy)
         {
-            return builder.CreateCall(concatFunc, { left, right }, "strcatTmp");
+            llvm::Value* val = builder.CreateCall(concatFunc, { left, right }, "strcatTmp");
+            m_heapValues.insert(val);
+            return val;
         }
 
         // string + int/double
         if (leftTy->isPointerTy() && (rightTy->isIntegerTy() || rightTy->isDoubleTy()))
         {
             llvm::Value* rightStr = IntToString(right);
-            return builder.CreateCall(concatFunc, { left, rightStr}, "strcatTmp");
+            llvm::Value* val = builder.CreateCall(concatFunc, { left, rightStr}, "strcatTmp");
+            m_heapValues.insert(val);
+            return val;
         }
     }
     if (op == TT_MINUS)
@@ -231,7 +235,7 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
         return nullptr;
     }
 
-    llvm::AllocaInst* alloca = m_namedValues[name];
+    llvm::AllocaInst* alloca = m_namedValues[name].alloca;
 
     return builder.CreateLoad(alloca->getAllocatedType(), alloca, name);
 }
@@ -243,15 +247,19 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     llvm::Type* type = value->getType();
 
     llvm::AllocaInst* alloca;
+    bool isHeap = m_heapValues.contains(value);
 
     if (m_namedValues.find(name) == m_namedValues.end())
     {
         // first time -> allocate
         alloca = CreateEntryBlockAlloca(name, type);
-        m_namedValues[name] = alloca;
+        m_namedValues[name] = { alloca, isHeap };
     }
     else
-        alloca = m_namedValues[name];
+    {
+        alloca = m_namedValues[name].alloca;
+        m_namedValues[name].isHeapAllocated = isHeap;
+    }
 
     if (alloca->getAllocatedType() != type)
     {
@@ -304,11 +312,14 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     {
         llvm::AllocaInst* alloca = CreateEntryBlockAlloca(arg.getName().str(), arg.getType());
         builder.CreateStore(&arg, alloca);
-        m_namedValues[arg.getName().str()] = alloca;
+        m_namedValues[arg.getName().str()].alloca = alloca;
     }
 
     // Compile body
     llvm::Value* retVal = CompileNode(node->GetBodyNode());
+
+    // Free all localy created heap values at end of function
+    FreeLocalHeapValues();
 
     if (node->GetShouldAutoReturn())
         builder.CreateRet(retVal);
@@ -371,6 +382,19 @@ llvm::Value *Compiler::Compile_ReturnNode(ReturnNode *node)
     return builder.CreateRet(val);
 }
 
+void Compiler::FreeLocalHeapValues()
+{
+    for (auto& [name, info] : m_namedValues)
+    {
+        if (!info.isHeapAllocated)
+            continue;
+
+        llvm::Value* loaded = builder.CreateLoad(info.alloca->getAllocatedType(), info.alloca, name);
+
+        builder.CreateCall(freeFunc, { loaded });
+    }
+}
+
 void Compiler::DeclareConcat()
 {
     llvm::Type* strTy = builder.getInt8Ty()->getPointerTo();
@@ -418,7 +442,9 @@ llvm::AllocaInst *Compiler::CreateEntryBlockAlloca(const std::string &name, llvm
 
 llvm::Value *Compiler::IntToString(llvm::Value *val)
 {
-    return builder.CreateCall(intToStrFunc, { val }, "intStrTmp");
+    llvm::Value* intToStrVal = builder.CreateCall(intToStrFunc, { val }, "intStrTmp");
+    m_heapValues.insert(intToStrVal);
+    return val;
 }
 
 llvm::Value *Compiler::CreateFormatString(const std::string &fmt)
