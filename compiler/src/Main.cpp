@@ -67,6 +67,14 @@ int main(int argc, char** argv)
         std::cout << "AST:\n" << ast.GetNode()->Repr() << std::endl;
 
     // Compile
+    auto filepathNoEndfile(filepath);
+    auto absoluteFilepathNoEndfile = std::filesystem::canonical(filepathNoEndfile);
+    absoluteFilepathNoEndfile.remove_filename();
+    bool dumpIR = Helper::argv_has(argc, argv, "--dumpIR");
+
     Compiler compiler;
-    compiler.GenerateIR(ast.GetNode());
+    compiler.GenerateIR(ast.GetNode(), dumpIR);
+    compiler.EmitObjectFile("output.o");
+    if(!Helper::argv_has(argc, argv, "--o"))
+        compiler.LinkObjectFile(absoluteFilepathNoEndfile);
 }

@@ -5,8 +5,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Optionen
+option(DEBUG_SYMBOLS "include debug symbols" ON)
 option(BUILD_COMPILER "Build compiler executable" ON)
 option(BUILD_LSP "Build language server" ON)
+
+if(DEBUG_SYMBOLS)
+    set(CMAKE_BUILD_TYPE Debug)
+endif()
 
 add_subdirectory(core)
 

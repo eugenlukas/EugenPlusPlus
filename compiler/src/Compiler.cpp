@@ -1,11 +1,113 @@
 #include "Compiler.hpp"
+#include <Helper.hpp>
 
-void Compiler::GenerateIR(std::shared_ptr<Node> rootNode)
+void Compiler::GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR)
 {
     // Compile root node
     CompileNode(rootNode);
 
-    module->print(llvm::outs(), nullptr);
+    if (dumpIR)
+        module->print(llvm::outs(), nullptr);
+}
+
+void Compiler::EmitObjectFile(const std::string& filename)
+{
+    // Initialize targets
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+
+    // Target triple
+    std::string targetTriple = llvm::sys::getDefaultTargetTriple();
+    module->setTargetTriple(llvm::Triple(targetTriple));
+
+    // Lookup target
+    std::string error;
+    const llvm::Target* target =
+        llvm::TargetRegistry::lookupTarget(targetTriple, error);
+
+    if (!target)
+    {
+        llvm::errs() << "Target lookup failed: " << error << "\n";
+        return;
+    }
+
+    // Create TargetMachine
+    llvm::TargetOptions opt;
+    auto RM = std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_);
+
+    std::unique_ptr<llvm::TargetMachine> targetMachine(
+        target->createTargetMachine(
+            llvm::Triple(targetTriple),
+            "generic",
+            "",
+            opt,
+            RM
+        )
+    );
+
+    // Apply DataLayout
+    module->setDataLayout(targetMachine->createDataLayout());
+
+    // Open output file
+    std::error_code EC;
+    llvm::raw_fd_ostream dest(filename, EC, llvm::sys::fs::OF_None);
+
+    if (EC)
+    {
+        llvm::errs() << "Could not open file: " << EC.message() << "\n";
+        return;
+    }
+
+    // Codegen pipeline
+    llvm::legacy::PassManager pass;
+
+    llvm::CodeGenFileType fileType = llvm::CodeGenFileType::ObjectFile;
+
+    if (targetMachine->addPassesToEmitFile(
+            pass,
+            dest,
+            nullptr,
+            fileType))
+    {
+        llvm::errs() << "TargetMachine cannot emit this file type\n";
+        return;
+    }
+
+    // Run passes
+    pass.run(*module);
+
+    dest.flush();
+}
+
+void Compiler::LinkObjectFile(const std::string &filepath)
+{
+    std::string linker = DetectLinker();
+
+    if (linker.empty())
+    {
+        std::cerr << "No suitable linker found (clang++ or g++)\n";
+        return;
+    }
+
+    std::string exeName = filepath + "program";
+
+#ifdef _WIN32
+    exeName += ".exe";
+#endif
+
+    std::string libPath = Helper::GetExecutableDir() + "/lib";
+
+    std::string cmd =
+        linker + " " +
+        filepath + "output.o " +
+        "-L\"" + libPath + "\" " +
+        "-lruntime " +
+        "-o \"" + exeName + "\"";
+
+    int result = std::system(cmd.c_str());
+
+    if (result != 0)
+        std::cerr << "Linking failed\n";
 }
 
 llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
@@ -238,7 +340,7 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         for (auto& argNode : node->GetArgNodes())
             args.push_back(CompileNode(argNode));
 
-        return m_builtins[name]->Codegen(builder, freeFunc, args);
+        return m_builtins[name]->Codegen(builder, args);
     }
 
     // Normal functions
@@ -292,9 +394,17 @@ void Compiler::DeclareFree()
     freeFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "free", module.get());
 }
 
+void Compiler::DeclarePrintf()
+{
+    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt32Ty(), { builder.getInt8Ty()->getPointerTo() }, true);
+    printfFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "printf", module.get());
+}
+
 void Compiler::RegisterBuiltins()
 {
-    m_builtins["free"] = std::make_unique<BuiltinFree>();
+    m_builtins["free"] = std::make_unique<BuiltinFree>(freeFunc);
+    m_builtins["print"] = std::make_unique<BuiltinPrint>(printfFunc);
+    m_builtins["println"] = std::make_unique<BuiltinPrintln>(printfFunc);
 }
 
 llvm::AllocaInst *Compiler::CreateEntryBlockAlloca(const std::string &name, llvm::Type *type)
@@ -309,4 +419,27 @@ llvm::AllocaInst *Compiler::CreateEntryBlockAlloca(const std::string &name, llvm
 llvm::Value *Compiler::IntToString(llvm::Value *val)
 {
     return builder.CreateCall(intToStrFunc, { val }, "intStrTmp");
+}
+
+llvm::Value *Compiler::CreateFormatString(const std::string &fmt)
+{
+    builder.CreateGlobalStringPtr(fmt, "fmt");
+}
+
+std::string Compiler::DetectLinker()
+{
+#ifdef _WIN32
+    if (std::system("where clang++ >nul 2>&1") == 0)
+        return "clang++";
+    if (std::system("where g++ >nul 2>&1") == 0)
+        return "g++";
+#else
+    // Linux/macOS
+    if (std::system("which clang++ > /dev/null 2>&1") == 0)
+        return "clang++";
+    if (std::system("which g++ > /dev/null 2>&1") == 0)
+        return "g++";
+#endif
+
+    return "";
 }

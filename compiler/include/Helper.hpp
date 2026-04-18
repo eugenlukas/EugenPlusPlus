@@ -5,6 +5,7 @@
 #include "Interpreter.hpp"
 #include <sstream>
 #include <iomanip>
+#include <filesystem>
 
 class Helper
 {
@@ -124,5 +125,27 @@ public:
             }
         }
         return false;
+    }
+
+    static std::string GetExecutableDir()
+    {
+        #ifdef __linux__
+        #include <unistd.h>
+        #include <limits.h>
+
+        char buffer[PATH_MAX];
+        ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+        if (len != -1) {
+            buffer[len] = '\0';
+            return std::filesystem::path(buffer).parent_path().string();
+        }
+    return "";
+        #elif _WIN32
+        #include <windows.h>
+
+        char buffer[MAX_PATH];
+        GetModuleFileNameA(NULL, buffer, MAX_PATH);
+        return std::filesystem::path(buffer).parent_path().string();
+        #endif
     }
 };

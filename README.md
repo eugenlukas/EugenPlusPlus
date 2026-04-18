@@ -32,6 +32,8 @@
  filepath		-run file directly (must be at the first position)
  --tokens		-shows all tokens
  --ast			-abstract syntax tree
+ --dumpIR       -dumps the generated IR to console
+ --o            -only make object file without linking
  ~~~
 
 <h2>Syntax</h2>
@@ -49,7 +51,7 @@ cmake ..
 make
 ~~~
 
-<h3>Dpendencies</h3>
+<h3>Dpendencies to build</h3>
 <ul>
 <li>cmake</li>
 <li>g++</li>
