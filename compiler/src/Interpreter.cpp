@@ -326,42 +326,42 @@ RTResult Interpreter::Visit_IfNode(IfNode& node)
 {
     RTResult res;
 
-    for (IfCase& ifCase : node.GetCases())
-    {
-        RTResult conditionValue = Visit(ifCase.GetCondition());
-        if (conditionValue.ShouldReturn())
-            return conditionValue;
+    //for (IfCase& ifCase : node.GetCases())
+    //{
+    //    RTResult conditionValue = Visit(ifCase.GetCondition());
+    //    if (conditionValue.ShouldReturn())
+    //        return conditionValue;
 
-        if (std::get<double>(conditionValue.GetValue().value()) != 0)
-        {
-            RTResult exprValue = Visit(ifCase.GetExpr());
-            if (exprValue.ShouldReturn())
-                return exprValue;
+    //    if (std::get<double>(conditionValue.GetValue().value()) != 0)
+    //    {
+    //        RTResult exprValue = Visit(ifCase.GetExpr());
+    //        if (exprValue.ShouldReturn())
+    //            return exprValue;
 
-            if (exprValue.GetValue().has_value() == false)
-                return res.Success(std::nullopt);
+    //        if (exprValue.GetValue().has_value() == false)
+    //            return res.Success(std::nullopt);
 
-            if (!ifCase.GetShouldReturnNull())
-                return res.Success(exprValue.GetValue().value());
-            else
-                return res.Success(std::nullopt);
-        }
-    }
+    //        if (!ifCase.GetShouldReturnNull())
+    //            return res.Success(exprValue.GetValue().value());
+    //        else
+    //            return res.Success(std::nullopt);
+    //    }
+    //}
 
-    if (node.GetElseCase() != nullptr)
-    {
-        RTResult elseValue = Visit(node.GetElseCase());
-        if (elseValue.ShouldReturn())
-            return elseValue;
+    //if (node.GetElseCase() != nullptr)
+    //{
+    //    RTResult elseValue = Visit(node.GetElseCase());
+    //    if (elseValue.ShouldReturn())
+    //        return elseValue;
 
-        if (elseValue.GetValue().has_value() == false)
-            return res.Success(std::nullopt);
+    //    if (elseValue.GetValue().has_value() == false)
+    //        return res.Success(std::nullopt);
 
-        /*if (!node.GetElseCase())
-            return res.Success(elseValue.GetValue().value());
-        else*/
-            return res.Success(std::nullopt);
-    }
+    //    /*if (!node.GetElseCase())
+    //        return res.Success(elseValue.GetValue().value());
+    //    else*/
+    //        return res.Success(std::nullopt);
+    //}
 
     return res.Success(std::nullopt);
 }

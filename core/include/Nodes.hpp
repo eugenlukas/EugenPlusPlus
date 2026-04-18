@@ -37,16 +37,16 @@ class IfCase
 {
 public:
 	IfCase() = default;
-	IfCase(std::shared_ptr<Node> condition, std::shared_ptr<Node> expr, bool shouldReturnNull) : condition(condition), expr(expr), shouldReturnNull(shouldReturnNull) {}
+	IfCase(std::shared_ptr<Node> condition, std::shared_ptr<Node> expr, bool shouldReturnNull) : condition(std::move(condition)), expr(std::move(expr)), shouldReturnNull(shouldReturnNull) {}
 
-	std::shared_ptr<Node> GetCondition() { return condition; }
-	std::shared_ptr<Node> GetExpr() { return expr; }
+	const std::shared_ptr<Node>& GetCondition() const { return condition; }
+	const std::shared_ptr<Node>& GetExpr() const { return expr; }
 	bool GetShouldReturnNull() const { return shouldReturnNull; }
 
 private:
-	std::shared_ptr<Node> condition;
-	std::shared_ptr<Node> expr;
-	bool shouldReturnNull;
+	std::shared_ptr<Node> condition { nullptr };
+	std::shared_ptr<Node> expr { nullptr };
+	bool shouldReturnNull = false;
 };
 
 class NumberNode : public Node
@@ -160,8 +160,8 @@ public:
 	IfNode(std::vector<IfCase> cases, std::shared_ptr<Node> elseCase);
 
 	std::string Repr() override;
-	std::vector<IfCase> GetCases() { return cases; }
-	std::shared_ptr<Node> GetElseCase() { return elseCase; }
+	const std::vector<IfCase>& GetCases() const { return cases; }
+	const std::shared_ptr<Node>& GetElseCase() const { return elseCase; }
 
 private:
 	std::vector<IfCase> cases;

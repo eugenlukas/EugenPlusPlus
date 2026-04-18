@@ -121,6 +121,12 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
     if (auto n = dynamic_cast<BinOpNode*>(node.get()))
         return Compile_BinOpNode(n);
 
+    if (auto n = dynamic_cast<UnaryOpNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'unary operation' node\n";
+        return nullptr;
+    }
+
     if (auto n = dynamic_cast<ListNode*>(node.get()))
         return Compile_ListNode(n);
 
@@ -139,7 +145,55 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
     if (auto n = dynamic_cast<ReturnNode*>(node.get()))
         return Compile_ReturnNode(n);
 
-    std::cerr << "Unknown node type\n";
+    if (auto n = dynamic_cast<IfNode*>(node.get()))
+        return Compile_IfNode(n);
+
+    if (auto n = dynamic_cast<ForNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'for' node\n";
+        return nullptr;
+    }
+
+    if (auto n = dynamic_cast<WhileNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'while' node\n";
+        return nullptr;
+    }
+
+    if (auto n = dynamic_cast<ContinueNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'continue' node\n";
+        return nullptr;
+    }
+
+    if (auto n = dynamic_cast<BreakNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'break' node\n";
+        return nullptr;
+    }
+
+    if (auto n = dynamic_cast<ModuleNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'module' node\n";
+        return nullptr;
+    }
+
+    if (auto n = dynamic_cast<LinkNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'link' node\n";
+        return nullptr;
+    }
+
+    if (auto n = dynamic_cast<ExternNode*>(node.get()))
+    {
+        std::cerr << "ToDo: Implement 'extern' node\n";
+        return nullptr;
+    }
+
+    if (node.get() != nullptr)
+        std::cerr << "Unknown node type '" << typeid(*node.get()).name() << "'\n";
+    else
+        std::cerr << "Node type to compile was null\n";
     return nullptr;
 }
 
@@ -177,18 +231,62 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
 {
     llvm::Value* left = CompileNode(node->GetLeftNode());
     llvm::Value* right = CompileNode(node->GetRightNode());
+    llvm::Type* leftTy = left->getType();
+    llvm::Type* rightTy = right->getType();
+
+    // types to string
+    std::string leftTyStr;
+    llvm::raw_string_ostream lrso(leftTyStr);
+    leftTy->print(lrso);
+    std::string rightTyStr;
+    llvm::raw_string_ostream rrso(rightTyStr);
+    rightTy->print(rrso);
 
     std::string op = node->GetOpToken().GetType();
 
+    // Handle two numbers
+    if ((leftTy->isDoubleTy() && rightTy->isDoubleTy()) || (leftTy->isIntegerTy() && rightTy->isIntegerTy()))
+    {
+        if (op == TT_PLUS)
+            return builder.CreateAdd(left, right, "addTmp");
+        if (op == TT_MINUS)
+            return builder.CreateSub(left, right, "subTmp");
+        if (op == TT_MUL)
+            return builder.CreateMul(left, right, "mulTmp");
+        if (op == TT_DIV)
+            return builder.CreateSDiv(left, right, "divTmp"); // Signed
+        if (op == TT_MOD)
+            return builder.CreateSRem(left, right, "sremTmp"); // Signed
+        if (op == TT_POW)
+        {
+            llvm::Function* powFunc = llvm::Intrinsic::getOrInsertDeclaration(module.get(), llvm::Intrinsic::pow, {left->getType()});
+            return builder.CreateCall(powFunc, {left, right}, "powTmp");
+        }
+        if (op == TT_EQEQ)
+            return builder.CreateICmpEQ(left, right, "eqtmp");
+        if (op == TT_NEQ)
+            return builder.CreateICmpNE(left, right, "netmp");
+        if (op == TT_LT)
+            return builder.CreateICmpSLT(left, right, "lttmp"); // Signed
+        if (op == TT_GT)
+            return builder.CreateICmpSGT(left, right, "gttmp"); // Signed
+        if (op == TT_LTEQ)
+            return builder.CreateICmpSLE(left, right, "ltetmp"); // Signed
+        if (op == TT_GTEQ)
+            return builder.CreateICmpSGE(left, right, "gtetmp"); // Signed
+        if (node->GetOpToken().Matches(TT_KEYWORD, "AND"))
+            return builder.CreateAnd(left, right, "andtmp");
+        if (node->GetOpToken().Matches(TT_KEYWORD, "OR"))
+            return builder.CreateOr(left, right, "ortmp");
+
+        std::cerr << "Unsupported binary operation '" << op << "' for two numbers\n";
+        return nullptr;
+    }
+
+    // Handle other types
     if (op == TT_PLUS)
     {
-        llvm::Type* leftTy = left->getType();
-        llvm::Type* rightTy = right->getType();
         llvm::Type* strTy = builder.getInt8Ty()->getPointerTo();
-
-        // double + double
-        if ((leftTy->isDoubleTy() && rightTy->isDoubleTy()) || (leftTy->isIntegerTy() && rightTy->isIntegerTy()))
-            return builder.CreateAdd(left, right, "addTmp");
 
         // string + string
         if (leftTy == strTy && rightTy == strTy)
@@ -206,22 +304,23 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
             m_heapValues.insert(val);
             return val;
         }
+
+        //ToDo: List + ListVar
+
+        std::cerr << "Unsupported binary operation '+' on type: '" << leftTyStr << "' and '" << rightTyStr << "'\n";
+        return nullptr;
     }
-    if (op == TT_MINUS)
-        return builder.CreateSub(left, right, "subTmp");
     if (op == TT_MUL)
-        return builder.CreateMul(left, right, "mulTmp");
-    if (op == TT_DIV)
-        return builder.CreateSDiv(left, right, "divTmp"); //Signed
-    if (op == TT_MOD)
-        return builder.CreateSRem(left, right, "sremTmp"); //Signed
-    if (op == TT_POW)
     {
-        llvm::Function* powFunc = llvm::Intrinsic::getOrInsertDeclaration(module.get(), llvm::Intrinsic::pow, {left->getType()});
-        return builder.CreateCall(powFunc, {left, right}, "powTmp");
+        // ToDo: string * number
+        // ToDo: number * string
+        // ToDo: List * List
+        
+        std::cerr << "Unsupported binary operation 'MUL' on type: '" << leftTyStr << "' and '" << rightTyStr << "'\n";
+        return nullptr;
     }
 
-    std::cerr << "Unknown binary operation\n";
+    std::cerr << "Unknown binary operation: '" << op << "'\n";
     return nullptr;
 }
 
@@ -270,6 +369,77 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     builder.CreateStore(value, alloca);
 
     return value;
+}
+
+llvm::Value* Compiler::Compile_IfNode(IfNode* node, llvm::BasicBlock* existingMergeBB)
+{
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
+
+    // Reuse the caller's merge block if provided (elif/else-if chain)
+    bool ownsMergeBB = (existingMergeBB == nullptr);
+    llvm::BasicBlock* mergeBB = ownsMergeBB
+        ? llvm::BasicBlock::Create(context, "ifcont")
+        : existingMergeBB;
+
+    llvm::BasicBlock* nextCondBB = nullptr;
+
+    for (size_t i = 0; i < node->GetCases().size(); i++)
+    {
+        auto& ifCase = node->GetCases()[i];
+
+        if (ifCase.GetCondition() == nullptr)
+        {
+            CompileNode(ifCase.GetExpr());
+            builder.CreateBr(mergeBB);
+            break;
+        }
+
+        llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(context, "then", function);
+
+        llvm::Value* cond = CompileNode(ifCase.GetCondition());
+        cond = builder.CreateICmpNE(
+            cond,
+            llvm::ConstantInt::get(cond->getType(), 0),
+            "ifcond"
+        );
+
+        bool isLastCase = (i == node->GetCases().size() - 1);
+        if (isLastCase && !node->GetElseCase())
+            nextCondBB = mergeBB;
+        else
+            nextCondBB = llvm::BasicBlock::Create(context, "else");
+
+        builder.CreateCondBr(cond, thenBB, nextCondBB);
+
+        builder.SetInsertPoint(thenBB);
+        CompileNode(ifCase.GetExpr());
+        builder.CreateBr(mergeBB);
+
+        if (nextCondBB != mergeBB)
+        {
+            function->insert(function->end(), nextCondBB);
+            builder.SetInsertPoint(nextCondBB);
+        }
+    }
+
+    if (node->GetElseCase())
+    {
+        // If the else body is itself an if-chain, pass mergeBB down so it does not create a redundant ifcont of its own
+        if (auto* elseIf = dynamic_cast<IfNode*>(node->GetElseCase().get()))
+            Compile_IfNode(elseIf, mergeBB);
+        else
+        {
+            CompileNode(node->GetElseCase());
+            builder.CreateBr(mergeBB);
+        }
+    }
+
+    // Only insert+own the block if we created it
+    if (ownsMergeBB)
+        function->insert(function->end(), mergeBB);
+
+    builder.SetInsertPoint(mergeBB);
+    return nullptr;
 }
 
 llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
@@ -324,8 +494,11 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     if (node->GetShouldAutoReturn())
         builder.CreateRet(retVal);
     else
-        if (!block->getTerminator())
+    {
+        llvm::BasicBlock* currentBB = builder.GetInsertBlock();
+        if (!currentBB->getTerminator())
             builder.CreateRet(llvm::ConstantInt::get(builder.getInt32Ty(), 0));
+    }
 
     llvm::verifyFunction(*func);
 

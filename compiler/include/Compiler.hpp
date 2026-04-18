@@ -75,7 +75,7 @@ private:
     llvm::Value* Compile_VarAccessNode(VarAccessNode* node);
     llvm::Value* Compile_VarAssignNode(VarAssignNode* node);
 	//void Visit_UnaryOpNode(UnaryOpNode& node);
-	//void Visit_IfNode(IfNode& node);
+    llvm::Value* Compile_IfNode(IfNode* node, llvm::BasicBlock* existingMergeBB = nullptr);
 	//void Visit_ForNode(ForNode& node);
 	//void Visit_WhileNode(WhileNode& node);
     llvm::Value* Compile_FuncDefNode(FuncDefNode* node);
