@@ -149,10 +149,7 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
         return Compile_IfNode(n);
 
     if (auto n = dynamic_cast<ForNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'for' node\n";
-        return nullptr;
-    }
+        return Compile_ForNode(n);
 
     if (auto n = dynamic_cast<WhileNode*>(node.get()))
     {
@@ -161,16 +158,10 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
     }
 
     if (auto n = dynamic_cast<ContinueNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'continue' node\n";
-        return nullptr;
-    }
+        return Compile_ContinueNode(n);
 
     if (auto n = dynamic_cast<BreakNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'break' node\n";
-        return nullptr;
-    }
+        return Compile_BreakNode(n);
 
     if (auto n = dynamic_cast<ModuleNode*>(node.get()))
     {
@@ -328,15 +319,14 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
 {
     std::string name = std::get<std::string>(node->GetVarNameToken().GetValue());
 
-    if (m_namedValues.find(name) == m_namedValues.end())
+    VarInfo* var = FindVariable(name);
+    if (!var)
     {
         std::cerr << "Undefined variable: " << name << "\n";
         return nullptr;
     }
 
-    llvm::AllocaInst* alloca = m_namedValues[name].alloca;
-
-    return builder.CreateLoad(alloca->getAllocatedType(), alloca, name);
+    return builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, name);
 }
 
 llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
@@ -345,19 +335,20 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     llvm::Value* value = CompileNode(node->GetValueNode());
     llvm::Type* type = value->getType();
 
-    llvm::AllocaInst* alloca;
+    llvm::AllocaInst* alloca = nullptr;
     bool isHeap = m_heapValues.contains(value);
 
-    if (m_namedValues.find(name) == m_namedValues.end())
+    VarInfo* existing = FindVariable(name);
+    if (!existing)
     {
         // first time -> allocate
         alloca = CreateEntryBlockAlloca(name, type);
-        m_namedValues[name] = { alloca, isHeap };
+        SetVariable(name, { alloca, isHeap });
+        builder.CreateStore(value, alloca);
     }
     else
     {
-        alloca = m_namedValues[name].alloca;
-        m_namedValues[name].isHeapAllocated = isHeap;
+        builder.CreateStore(value, existing->alloca);
     }
 
     if (alloca->getAllocatedType() != type)
@@ -442,6 +433,101 @@ llvm::Value* Compiler::Compile_IfNode(IfNode* node, llvm::BasicBlock* existingMe
     return nullptr;
 }
 
+llvm::Value *Compiler::Compile_ForNode(ForNode *node)
+{
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
+
+    PushScope();
+
+    std::string varName = std::get<std::string>(node->GetVarNameTok().GetValue());
+
+    llvm::Value* startVal = CompileNode(node->GetStartValueNode());
+
+    llvm::AllocaInst* alloca = CreateEntryBlockAlloca(varName, startVal->getType());
+    builder.CreateStore(startVal, alloca);
+
+    SetVariable(varName, { alloca, false });
+
+    // Blocks
+    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "for.cond", function);
+    llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "for.body", function);
+    llvm::BasicBlock* stepBB = llvm::BasicBlock::Create(context, "for.step", function);
+    llvm::BasicBlock* afterBB = llvm::BasicBlock::Create(context, "for.end", function);
+
+    // Push loop context
+    m_loopStack.push_back({ stepBB, afterBB });
+
+    builder.CreateBr(condBB);
+
+    // condition
+    builder.SetInsertPoint(condBB);
+
+    llvm::Value* currentVal = builder.CreateLoad(
+        alloca->getAllocatedType(), alloca, varName);
+
+    llvm::Value* endVal = CompileNode(node->GetEndValueNode());
+
+    // get step for consition
+    bool negativeStep = false;
+    if (node->GetStepValueNode())
+    {
+        if (auto num = dynamic_cast<NumberNode*>(node->GetStepValueNode().get()))
+        {
+            auto val = num->GetToken().GetValue();
+
+            if (std::holds_alternative<int>(val))
+            {
+                if (std::get<int>(val) == 0)
+                {
+                    std::cerr << "For loop step cannot be 0\n"; // would create infinite loop
+                    return nullptr;
+                }
+
+                negativeStep = std::get<int>(val) < 0;
+            }
+        }
+    }
+
+    // build condition
+    llvm::Value* cond;
+    if (!negativeStep)
+        cond = builder.CreateICmpSLE(currentVal, endVal);
+    else
+        cond = builder.CreateICmpSGE(currentVal, endVal);
+
+    builder.CreateCondBr(cond, bodyBB, afterBB);
+
+    // body
+    builder.SetInsertPoint(bodyBB);
+
+    CompileNode(node->GetBodyNode());
+
+    // If body didn't already terminate (break/return)
+    if (!builder.GetInsertBlock()->getTerminator())
+        builder.CreateBr(stepBB);
+
+    // step
+    builder.SetInsertPoint(stepBB);
+
+    llvm::Value* stepVal = node->GetStepValueNode()
+        ? CompileNode(node->GetStepValueNode())
+        : llvm::ConstantInt::get(builder.getInt32Ty(), 1);
+
+    currentVal = builder.CreateLoad(alloca->getAllocatedType(), alloca, varName);
+    llvm::Value* nextVal = builder.CreateAdd(currentVal, stepVal);
+
+    builder.CreateStore(nextVal, alloca);
+    builder.CreateBr(condBB);
+
+    // after
+    builder.SetInsertPoint(afterBB);
+
+    m_loopStack.pop_back();
+    PopScope();
+
+    return nullptr;
+}
+
 llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 {
     if (!node->GetVarNameTok().has_value())
@@ -475,14 +561,14 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     builder.SetInsertPoint(block);
 
     // New variable scope
-    m_namedValues.clear();
+    PushScope();
 
     // Store and allocate variables
     for (auto& arg : func->args())
     {
         llvm::AllocaInst* alloca = CreateEntryBlockAlloca(arg.getName().str(), arg.getType());
         builder.CreateStore(&arg, alloca);
-        m_namedValues[arg.getName().str()].alloca = alloca;
+        SetVariable(arg.getName().str(), { alloca, false });
     }
 
     // Compile body
@@ -490,6 +576,8 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     // Free all localy created heap values at end of function
     FreeLocalHeapValues();
+
+    PopScope();
 
     if (node->GetShouldAutoReturn())
         builder.CreateRet(retVal);
@@ -555,9 +643,73 @@ llvm::Value *Compiler::Compile_ReturnNode(ReturnNode *node)
     return builder.CreateRet(val);
 }
 
+llvm::Value *Compiler::Compile_ContinueNode(ContinueNode *node)
+{
+    if (m_loopStack.empty())
+    {
+        std::cerr << "Continue outside loop\n";
+        return nullptr;
+    }
+
+    builder.CreateBr(m_loopStack.back().continueBB);
+
+    // Create dead block so IR stays valid
+    llvm::BasicBlock* deadBB = llvm::BasicBlock::Create(context, "aftercontinue", builder.GetInsertBlock()->getParent());
+    builder.SetInsertPoint(deadBB);
+
+    return nullptr;
+}
+
+llvm::Value *Compiler::Compile_BreakNode(BreakNode *node)
+{
+    if (m_loopStack.empty())
+    {
+        std::cerr << "Break outside loop\n";
+        return nullptr;
+    }
+
+    builder.CreateBr(m_loopStack.back().breakBB);
+
+    // Create dead block so IR stays valid
+    llvm::BasicBlock* deadBB = llvm::BasicBlock::Create(context, "afterbreak", builder.GetInsertBlock()->getParent());
+    builder.SetInsertPoint(deadBB);
+
+    return nullptr;
+}
+
+void Compiler::PushScope()
+{
+    m_scopes.emplace_back();
+}
+
+void Compiler::PopScope()
+{
+    m_scopes.pop_back();
+}
+
+VarInfo *Compiler::FindVariable(const std::string &name)
+{
+    for (auto it = m_scopes.rbegin(); it != m_scopes.rend(); ++it)
+    {
+        if (it->contains(name))
+            return &(*it)[name];
+    }
+    return nullptr;
+}
+
+void Compiler::SetVariable(const std::string &name, VarInfo info)
+{
+    m_scopes.back()[name] = info;
+}
+
 void Compiler::FreeLocalHeapValues()
 {
-    for (auto& [name, info] : m_namedValues)
+    if (m_scopes.empty())
+        return;
+
+    auto& scope = m_scopes.back();
+
+    for (auto& [name, info] : scope)
     {
         if (!info.isHeapAllocated)
             continue;
@@ -623,6 +775,7 @@ llvm::Value *Compiler::IntToString(llvm::Value *val)
 llvm::Value *Compiler::CreateFormatString(const std::string &fmt)
 {
     builder.CreateGlobalStringPtr(fmt, "fmt");
+    return nullptr;
 }
 
 std::string Compiler::DetectLinker()

@@ -33,6 +33,12 @@ struct VarInfo
     bool isHeapAllocated;
 };
 
+struct LoopContext
+{
+    llvm::BasicBlock* continueBB;
+    llvm::BasicBlock* breakBB;
+};
+
 class Compiler
 {
 public:
@@ -56,9 +62,10 @@ private:
     llvm::IRBuilder<> builder;
     std::unique_ptr<llvm::Module> module;
 
-    std::map<std::string, VarInfo> m_namedValues;
+    std::vector<std::unordered_map<std::string, VarInfo>> m_scopes;
     std::unordered_set<llvm::Value*> m_heapValues;
     std::map<std::string, llvm::Function*> m_functions;
+    std::vector<LoopContext> m_loopStack;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
 
     llvm::Function* concatFunc;
@@ -76,14 +83,21 @@ private:
     llvm::Value* Compile_VarAssignNode(VarAssignNode* node);
 	//void Visit_UnaryOpNode(UnaryOpNode& node);
     llvm::Value* Compile_IfNode(IfNode* node, llvm::BasicBlock* existingMergeBB = nullptr);
-	//void Visit_ForNode(ForNode& node);
+    llvm::Value* Compile_ForNode(ForNode* node);
 	//void Visit_WhileNode(WhileNode& node);
     llvm::Value* Compile_FuncDefNode(FuncDefNode* node);
     llvm::Value* Compile_CallNode(CallNode* node);
     llvm::Value* Compile_ReturnNode(ReturnNode* node);
-	//void Visit_ContinueNode(ContinueNode& node);
+    llvm::Value* Compile_ContinueNode(ContinueNode* node);
+    llvm::Value* Compile_BreakNode(BreakNode* node);
 	//void Visit_BreakNode(BreakNode& node);
 	//void Visit_ImportNode(ImportNode& node);
+
+    void PushScope();
+    void PopScope();
+
+    VarInfo* FindVariable(const std::string& name);
+    void SetVariable(const std::string& name, VarInfo info);
 
     void FreeLocalHeapValues();
 

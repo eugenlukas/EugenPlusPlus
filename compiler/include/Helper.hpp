@@ -6,6 +6,12 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
+#ifdef __linux__
+        #include <unistd.h>
+        #include <limits.h>
+#elif _WIN32
+        #include <windows.h>
+#endif
 
 class Helper
 {
@@ -130,8 +136,6 @@ public:
     static std::string GetExecutableDir()
     {
         #ifdef __linux__
-        #include <unistd.h>
-        #include <limits.h>
 
         char buffer[PATH_MAX];
         ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
@@ -141,7 +145,6 @@ public:
         }
     return "";
         #elif _WIN32
-        #include <windows.h>
 
         char buffer[MAX_PATH];
         GetModuleFileNameA(NULL, buffer, MAX_PATH);
