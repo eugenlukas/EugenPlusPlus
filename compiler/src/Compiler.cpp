@@ -1,5 +1,10 @@
 #include "Compiler.hpp"
-#include <Helper.hpp>
+#include "Lexer.hpp"
+#include "Parser.hpp"
+#include "Helper.hpp"
+#include <fstream>
+#include <sstream>
+#include <filesystem>
 
 void Compiler::GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR)
 {
@@ -158,10 +163,7 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
         return Compile_BreakNode(n);
 
     if (auto n = dynamic_cast<ModuleNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'module' node\n";
-        return nullptr;
-    }
+        return Compile_ModuleNode(n);
 
     if (auto n = dynamic_cast<LinkNode*>(node.get()))
     {
@@ -313,6 +315,30 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
 {
     std::string name = std::get<std::string>(node->GetVarNameToken().GetValue());
 
+    // namespaced access (module::variable)
+    if (node->GetIsNamespaced())
+    {
+        const std::string namespaceName = node->GetNamespaceName().value();
+
+        auto modIt = m_moduleVariables.find(namespaceName);
+        if (modIt == m_moduleVariables.end())
+        {
+            std::cerr << "Module '" << namespaceName << "' not found\n";
+            return nullptr;
+        }
+
+        auto varIt = modIt->second.find(name);
+        if (varIt == modIt->second.end())
+        {
+            std::cerr << "'" << name << "' not found in module '" << namespaceName << "'\n";
+            return nullptr;
+        }
+
+        const VarInfo& info = varIt->second;
+        return builder.CreateLoad(info.alloca->getAllocatedType(), info.alloca, name);
+    }
+
+    // normal non-namespaced access
     VarInfo* var = FindVariable(name);
     if (!var)
     {
@@ -646,10 +672,12 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     std::string name = std::get<std::string>(node->GetVarNameTok()->GetValue());
 
-    // Functiom type
+    llvm::Type* returnType = InferenceReturnType(node->GetBodyNode(), node->GetShouldAutoReturn());
+
+    // Function arg types (all args are i32 for now)
     std::vector<llvm::Type*> argTypes(node->ArgNameToks().size(), builder.getInt32Ty());
 
-    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt32Ty(), argTypes, false);
+    llvm::FunctionType* funcType = llvm::FunctionType::get(returnType, argTypes, false);
 
     llvm::Function* func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, name, module.get());
 
@@ -687,13 +715,22 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     PopScope();
 
-    if (node->GetShouldAutoReturn())
+    if (node->GetShouldAutoReturn() && retVal)
         builder.CreateRet(retVal);
     else
     {
         llvm::BasicBlock* currentBB = builder.GetInsertBlock();
         if (!currentBB->getTerminator())
-            builder.CreateRet(llvm::ConstantInt::get(builder.getInt32Ty(), 0));
+        {
+            // build a type-correct fallback return value (ptr null / i32 0)
+            llvm::Value* defaultRet;
+            if (returnType->isPointerTy())
+                defaultRet = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(returnType));
+            else
+                defaultRet = llvm::ConstantInt::get(returnType, 0);
+
+            builder.CreateRet(defaultRet);
+        }
     }
 
     llvm::verifyFunction(*func);
@@ -712,6 +749,40 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
 
     std::string name = std::get<std::string>(varAccess->GetVarNameToken().GetValue());
 
+    // namespaced call (Module::function(args))
+    if (varAccess->GetIsNamespaced())
+    {
+        const std::string namespaceName = varAccess->GetNamespaceName().value();
+
+        auto modIt = m_moduleFunctions.find(namespaceName);
+        if (modIt == m_moduleFunctions.end())
+        {
+            std::cerr << "Module '" << namespaceName << "' not found\n";
+            return nullptr;
+        }
+
+        auto funcIt = modIt->second.find(name);
+        if (funcIt == modIt->second.end())
+        {
+            std::cerr << "Function '" << name << "' not found in module '" << namespaceName << "'\n";
+            return nullptr;
+        }
+
+        llvm::Function* func = funcIt->second;
+
+        std::vector<llvm::Value*> args;
+        for (auto& argNode : node->GetArgNodes())
+        {
+            llvm::Value* argVal = CompileNode(argNode);
+            if (!argVal)
+                return nullptr;
+
+            args.push_back(argVal);
+        }
+
+        return builder.CreateCall(func, args, "callTmp");
+    }
+
     // Builtin functions
     if (m_builtins.find(name) != m_builtins.end())
     {
@@ -723,7 +794,7 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         return m_builtins[name]->Codegen(builder, args);
     }
 
-    // Normal functions
+    // Normal functions (user-defined)
     if (m_functions.find(name) == m_functions.end())
     {
         std::cerr << "Unknown function: '" << name << "'!\n";
@@ -785,6 +856,86 @@ llvm::Value *Compiler::Compile_BreakNode(BreakNode *node)
     return nullptr;
 }
 
+llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
+{
+    std::filesystem::path filepath(std::get<std::string>(node->GetFilepathToken().GetValue()));
+
+    // if path is relative, resolve it based on importing file's directory
+    if (!filepath.is_absolute())
+    {
+        std::filesystem::path base(m_mainFilepath);
+        filepath = base.parent_path() / filepath;
+    }
+
+    if (!std::filesystem::exists(filepath))
+    {
+        std::cerr << "Module not found: " << filepath.string() << "\n";
+        return nullptr;
+    }
+
+    // normalize (e.g. resolve "..", ".")
+    filepath = std::filesystem::canonical(filepath);
+
+    // read source
+    std::ifstream file(filepath);
+    if (!file.is_open())
+    {
+        std::cerr << "Could not open module file: " << filepath.string() << "\n";
+        return nullptr;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string fileContent = buffer.str();
+    file.close();
+
+    // lex source
+    Lexer lexer(filepath.string(), fileContent);
+    auto lexResult = lexer.MakeTokens();
+    if (lexResult.error != nullptr)
+    {
+        std::cerr << "Lexer error in module!\n" << Helper::GetErrorString(lexResult.error.get()) << "\n";
+        return nullptr;
+    }
+
+    // parse lexResult
+    Parser parser(lexResult.tokens);
+    auto parseResult = parser.Parse();
+    if (parseResult.HasError())
+    {
+        std::cerr << "Parser error in module!\n" << Helper::GetErrorString(parseResult.GetErrorPtr()) << "\n";
+        return nullptr;
+    }
+
+    const std::string alias = node->GetAlias();
+
+    // snapeshot what already exists so we know what the module adds
+    auto functionsBefore = m_functions;
+    auto variablesBefore = CollectAllVariables();
+
+    // swap in the module's filepath so any nested #module directives inside this file resolve relative to *it*, not the importer
+    std::string savedFilepath = m_mainFilepath;
+    m_mainFilepath = filepath.string();
+
+    CompileNode(parseResult.GetNode());
+
+    // record functions introduced by the module
+    for (auto& [name, func] : m_functions)
+    {
+        if (functionsBefore.find(name) == functionsBefore.end())
+            m_moduleFunctions[alias][name] = func;
+    }
+
+    // record module-level variables (globals / top-level allocas)
+    for (auto& [name, info] : CollectAllVariables())
+    {
+        if (variablesBefore.find(name) == variablesBefore.end())
+            m_moduleVariables[alias][name] = info;
+    }
+
+    return nullptr;
+}
+
 void Compiler::PushScope()
 {
     m_scopes.emplace_back();
@@ -810,6 +961,20 @@ void Compiler::SetVariable(const std::string &name, VarInfo info)
     m_scopes.back()[name] = info;
 }
 
+std::unordered_map<std::string, VarInfo> Compiler::CollectAllVariables() const
+{
+    std::unordered_map<std::string, VarInfo> result;
+    for (const auto& scope : m_scopes)
+    {
+        for (const auto& [name, info] : scope)
+        {
+            result[name] = info;
+        }
+    }
+    
+    return result;
+}
+
 void Compiler::FreeLocalHeapValues()
 {
     if (m_scopes.empty())
@@ -826,6 +991,149 @@ void Compiler::FreeLocalHeapValues()
 
         builder.CreateCall(freeFunc, { loaded });
     }
+}
+
+// returns the LLVM type a single expression will produce. 'locals' carries variable types tracked by InferReturnTypeBlock
+llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap& locals)
+{
+    if (!node)
+        return builder.getInt32Ty();
+
+    // if literals
+    if (dynamic_cast<NumberNode*>(node.get()))
+        return builder.getInt32Ty();
+
+    if (dynamic_cast<StringNode*>(node.get()))
+        return llvm::PointerType::get(builder.getInt8Ty(), 0);
+
+    // ListNode (array literals)
+    if (dynamic_cast<ListNode*>(node.get()))
+        return llvm::PointerType::get(builder.getInt8Ty(), 0);
+
+    // unary operation (same type as operand)
+    if (auto u = dynamic_cast<UnaryOpNode*>(node.get()))
+        return InferenceExprType(u->GetNode(), locals);
+
+    // binary operation (ptr if either side is ptr)
+    if (auto b = dynamic_cast<BinOpNode*>(node.get()))
+    {
+        llvm::Type* L = InferenceExprType(b->GetLeftNode(),  locals);
+        llvm::Type* R = InferenceExprType(b->GetRightNode(), locals);
+        if (L->isPointerTy() || R->isPointerTy())
+            return llvm::PointerType::get(builder.getInt8Ty(), 0);
+        else
+            return builder.getInt32Ty();
+    }
+
+    // variable access
+    if (auto va = dynamic_cast<VarAccessNode*>(node.get()))
+    {
+        std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
+ 
+        // 1. pre-pass local map (variables assigned above this point in the body)
+        auto it = locals.find(name);
+        if (it != locals.end())
+            return it->second;
+ 
+        // 2. already-compiled outer scope allocas (e.g. captured from enclosing func)
+        VarInfo* var = FindVariable(name);
+        if (var)
+            return var->alloca->getAllocatedType();
+ 
+        return builder.getInt32Ty();
+    }
+
+    // function call: use the callee's declared return type
+    if (auto call = dynamic_cast<CallNode*>(node.get()))
+    {
+        if (auto va = dynamic_cast<VarAccessNode*>(call->GetNodeToCall().get()))
+        {
+            std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
+            auto it = m_functions.find(name);
+            if (it != m_functions.end())
+                return it->second->getReturnType();
+        }
+        return builder.getInt32Ty(); // forward/unknown call → assume i32
+    }
+ 
+    return builder.getInt32Ty();
+}
+
+//  Arrow functions (autoReturn=true):  body IS the expression.
+//  Block functions (autoReturn=false): walk statements for return.
+llvm::Type *Compiler::InferenceReturnType(std::shared_ptr<Node> body, bool autoReturn)
+{
+    if (autoReturn)
+        return InferenceExprType(body, {}); // body = single expr, no locals needed
+ 
+    LocalTypeMap locals;
+    return InferenceReturnTypeBlock(body, locals);
+}
+
+// walks the body of a block function. Tracks VarAssignNodes into 'locals' so subsequent expression inference can resolve variable types without compiled allocas
+llvm::Type *Compiler::InferenceReturnTypeBlock(std::shared_ptr<Node> node, LocalTypeMap& locals)
+{
+    if (!node)
+        return builder.getInt32Ty();
+ 
+    // explicit return statement
+    if (auto ret = dynamic_cast<ReturnNode*>(node.get()))
+    {
+        if (ret->GetNodeToReturn().has_value())
+            return InferenceExprType(ret->GetNodeToReturn().value(), locals);
+        return builder.getInt32Ty();
+    }
+ 
+    // statement list (ListNode used as block body)
+    if (auto list = dynamic_cast<ListNode*>(node.get()))
+    {
+        for (auto& stmt : list->GetElementNodes())
+        {
+            // track variable assignments so later stmts can use the type
+            if (auto assign = dynamic_cast<VarAssignNode*>(stmt.get()))
+            {
+                std::string varName = std::get<std::string>(assign->GetVarNameToken().GetValue());
+                locals[varName] = InferenceExprType(assign->GetValueNode(), locals);
+                continue;
+            }
+ 
+            // explicit return found
+            if (auto ret = dynamic_cast<ReturnNode*>(stmt.get()))
+            {
+                if (ret->GetNodeToReturn().has_value())
+                    return InferenceExprType(ret->GetNodeToReturn().value(), locals);
+                return builder.getInt32Ty();
+            }
+ 
+            // recurse into nested control flow
+            llvm::Type* t = InferenceReturnTypeBlock(stmt, locals);
+            if (t->isPointerTy())
+                return t;
+        }
+ 
+        return builder.getInt32Ty(); // no explicit return found
+    }
+ 
+    // control flow: recurse into branches
+    if (auto ifNode = dynamic_cast<IfNode*>(node.get()))
+    {
+        for (auto& c : ifNode->GetCases())
+        {
+            llvm::Type* t = InferenceReturnTypeBlock(c.GetExpr(), locals);
+            if (t->isPointerTy()) return t;
+        }
+        if (ifNode->GetElseCase())
+            return InferenceReturnTypeBlock(ifNode->GetElseCase(), locals);
+        return builder.getInt32Ty();
+    }
+ 
+    if (auto forNode = dynamic_cast<ForNode*>(node.get()))
+        return InferenceReturnTypeBlock(forNode->GetBodyNode(), locals);
+ 
+    if (auto whileNode = dynamic_cast<WhileNode*>(node.get()))
+        return InferenceReturnTypeBlock(whileNode->GetBodyNode(), locals);
+ 
+    return builder.getInt32Ty();
 }
 
 void Compiler::DeclareConcat()
@@ -877,7 +1185,7 @@ llvm::Value *Compiler::IntToString(llvm::Value *val)
 {
     llvm::Value* intToStrVal = builder.CreateCall(intToStrFunc, { val }, "intStrTmp");
     m_heapValues.insert(intToStrVal);
-    return val;
+    return intToStrVal;
 }
 
 llvm::Value *Compiler::CreateFormatString(const std::string &fmt)

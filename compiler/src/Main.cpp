@@ -73,6 +73,7 @@ int main(int argc, char** argv)
     bool dumpIR = Helper::argv_has(argc, argv, "--dumpIR");
 
     Compiler compiler;
+    compiler.SetMainFilepath(filepath.string());
     compiler.GenerateIR(ast.GetNode(), dumpIR);
     compiler.EmitObjectFile("output.o");
     if(!Helper::argv_has(argc, argv, "--o"))

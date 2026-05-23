@@ -53,11 +53,15 @@ public:
         RegisterBuiltins();
     }
 
+    void SetMainFilepath(const std::string& path) { m_mainFilepath = path; }
+
     void GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR);
     void EmitObjectFile(const std::string& filename);
     void LinkObjectFile(const std::string& filepath);
 
 private:
+    std::string m_mainFilepath; 
+
     llvm::LLVMContext context;
     llvm::IRBuilder<> builder;
     std::unique_ptr<llvm::Module> module;
@@ -65,6 +69,8 @@ private:
     std::vector<std::unordered_map<std::string, VarInfo>> m_scopes;
     std::unordered_set<llvm::Value*> m_heapValues;
     std::map<std::string, llvm::Function*> m_functions;
+    std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_moduleFunctions;
+    std::unordered_map<std::string, std::unordered_map<std::string, VarInfo>> m_moduleVariables; // global variables / top-level
     std::vector<LoopContext> m_loopStack;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
 
@@ -90,15 +96,21 @@ private:
     llvm::Value* Compile_ReturnNode(ReturnNode* node);
     llvm::Value* Compile_ContinueNode(ContinueNode* node);
     llvm::Value* Compile_BreakNode(BreakNode* node);
-	//void Visit_ImportNode(ImportNode& node);
+    llvm::Value* Compile_ModuleNode(ModuleNode* node);
 
     void PushScope();
     void PopScope();
 
     VarInfo* FindVariable(const std::string& name);
     void SetVariable(const std::string& name, VarInfo info);
-
+    // flattens m_scopes into a single name→VarInfo map so we can snapshot all currently visible variables before compiling a module and diff afterwards
+    std::unordered_map<std::string, VarInfo> CollectAllVariables() const;
     void FreeLocalHeapValues();
+
+    using LocalTypeMap = std::unordered_map<std::string, llvm::Type*>;
+    llvm::Type* InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap& locals);
+    llvm::Type* InferenceReturnType(std::shared_ptr<Node> body, bool autoReturn);
+    llvm::Type* InferenceReturnTypeBlock(std::shared_ptr<Node> node, LocalTypeMap& locals);
 
     void DeclareConcat();
     void DeclareIntToStr();
