@@ -81,7 +81,7 @@ private:
     llvm::Value* Compile_BinOpNode(BinOpNode* node);
     llvm::Value* Compile_VarAccessNode(VarAccessNode* node);
     llvm::Value* Compile_VarAssignNode(VarAssignNode* node);
-	//void Visit_UnaryOpNode(UnaryOpNode& node);
+    llvm::Value* Compile_UnaryOpNode(UnaryOpNode* node);
     llvm::Value* Compile_IfNode(IfNode* node, llvm::BasicBlock* existingMergeBB = nullptr);
     llvm::Value* Compile_ForNode(ForNode* node);
 	//void Visit_WhileNode(WhileNode& node);
@@ -90,7 +90,6 @@ private:
     llvm::Value* Compile_ReturnNode(ReturnNode* node);
     llvm::Value* Compile_ContinueNode(ContinueNode* node);
     llvm::Value* Compile_BreakNode(BreakNode* node);
-	//void Visit_BreakNode(BreakNode& node);
 	//void Visit_ImportNode(ImportNode& node);
 
     void PushScope();

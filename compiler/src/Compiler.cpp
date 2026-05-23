@@ -122,10 +122,7 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
         return Compile_BinOpNode(n);
 
     if (auto n = dynamic_cast<UnaryOpNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'unary operation' node\n";
-        return nullptr;
-    }
+        return Compile_UnaryOpNode(n);
 
     if (auto n = dynamic_cast<ListNode*>(node.get()))
         return Compile_ListNode(n);
@@ -254,21 +251,21 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
             return builder.CreateCall(powFunc, {left, right}, "powTmp");
         }
         if (op == TT_EQEQ)
-            return builder.CreateICmpEQ(left, right, "eqtmp");
+            return builder.CreateICmpEQ(left, right, "eqTmp");
         if (op == TT_NEQ)
-            return builder.CreateICmpNE(left, right, "netmp");
+            return builder.CreateICmpNE(left, right, "neTmp");
         if (op == TT_LT)
-            return builder.CreateICmpSLT(left, right, "lttmp"); // Signed
+            return builder.CreateICmpSLT(left, right, "ltTmp"); // Signed
         if (op == TT_GT)
-            return builder.CreateICmpSGT(left, right, "gttmp"); // Signed
+            return builder.CreateICmpSGT(left, right, "gtTmp"); // Signed
         if (op == TT_LTEQ)
-            return builder.CreateICmpSLE(left, right, "ltetmp"); // Signed
+            return builder.CreateICmpSLE(left, right, "lteTmp"); // Signed
         if (op == TT_GTEQ)
-            return builder.CreateICmpSGE(left, right, "gtetmp"); // Signed
+            return builder.CreateICmpSGE(left, right, "gteTmp"); // Signed
         if (node->GetOpToken().Matches(TT_KEYWORD, "AND"))
-            return builder.CreateAnd(left, right, "andtmp");
+            return builder.CreateAnd(left, right, "andTmp");
         if (node->GetOpToken().Matches(TT_KEYWORD, "OR"))
-            return builder.CreateOr(left, right, "ortmp");
+            return builder.CreateOr(left, right, "orTmp");
 
         std::cerr << "Unsupported binary operation '" << op << "' for two numbers\n";
         return nullptr;
@@ -360,6 +357,60 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     builder.CreateStore(value, alloca);
 
     return value;
+}
+
+llvm::Value *Compiler::Compile_UnaryOpNode(UnaryOpNode *node)
+{
+    llvm::Value* val = CompileNode(node->GetNode());
+
+    if (!val)
+        return nullptr;
+
+    std::string opToken = node->GetOpToken().GetType();
+    llvm::Type* ty = val->getType();
+
+    // INT
+    if (ty->isIntegerTy())
+    {
+        if (opToken == TT_MINUS)
+            return builder.CreateNeg(val, "negTmp");
+        if (opToken == TT_PLUS)
+            return val;
+
+        if (node->GetOpToken().Matches(TT_KEYWORD, "NOT"))  // logical not
+        {
+            llvm::Value* cmp = builder.CreateICmpEQ(val, llvm::ConstantInt::get(ty, 0), "notTmp");
+
+            // convert i1 to original integer type
+            return builder.CreateIntCast(cmp, ty, false, "boolTmp");
+        }
+
+        std::cerr << "Unknown unary integer operator\n";
+        return nullptr;
+    }
+
+    // FLOAT
+    if (ty->isDoubleTy())
+    {
+        if (opToken == TT_MINUS)
+            return builder.CreateFNeg(val, "fnegTmp");
+        if (opToken == TT_PLUS)
+            return val;
+
+        if (node->GetOpToken().Matches(TT_KEYWORD, "NOT")) // logical not
+        {
+            llvm::Value* cmp = builder.CreateFCmpUEQ(val, llvm::ConstantFP::get(ty, 0.0), "fnotTmp");
+
+            // bool to int32
+            return builder.CreateIntCast(cmp, builder.getInt32Ty(), false, "boolTmp");
+        }
+
+        std::cerr << "Unknown unary float operator\n";
+        return nullptr;
+    }
+
+    std::cerr << "Unsupported unary operator for type\n";
+    return nullptr;
 }
 
 llvm::Value* Compiler::Compile_IfNode(IfNode* node, llvm::BasicBlock* existingMergeBB)
@@ -467,7 +518,7 @@ llvm::Value *Compiler::Compile_ForNode(ForNode *node)
 
     llvm::Value* endVal = CompileNode(node->GetEndValueNode());
 
-    // get step for consition
+    // get step for condition
     bool negativeStep = false;
     if (node->GetStepValueNode())
     {
@@ -628,7 +679,7 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
     for (auto& argNode : node->GetArgNodes())
         args.push_back(CompileNode(argNode));
 
-    return builder.CreateCall(func, args, "calltmp");
+    return builder.CreateCall(func, args, "callTmp");
 }
 
 llvm::Value *Compiler::Compile_ReturnNode(ReturnNode *node)
