@@ -149,10 +149,7 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
         return Compile_ForNode(n);
 
     if (auto n = dynamic_cast<WhileNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'while' node\n";
-        return nullptr;
-    }
+        return Compile_WhileNode(n);
 
     if (auto n = dynamic_cast<ContinueNode*>(node.get()))
         return Compile_ContinueNode(n);
@@ -330,8 +327,9 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
 {
     std::string name = std::get<std::string>(node->GetVarNameToken().GetValue());
     llvm::Value* value = CompileNode(node->GetValueNode());
+    if (!value) return nullptr;
+    
     llvm::Type* type = value->getType();
-
     llvm::AllocaInst* alloca = nullptr;
     bool isHeap = m_heapValues.contains(value);
 
@@ -341,16 +339,15 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
         // first time -> allocate
         alloca = CreateEntryBlockAlloca(name, type);
         SetVariable(name, { alloca, isHeap });
-        builder.CreateStore(value, alloca);
     }
     else
     {
-        builder.CreateStore(value, existing->alloca);
+        alloca = existing->alloca;
     }
 
     if (alloca->getAllocatedType() != type)
     {
-        std::cerr << "Type missmatch for variable: '" << name << "'\n";
+        std::cerr << "Type mismatch for variable: '" << name << "'\n";
         return nullptr;
     }
 
@@ -574,6 +571,66 @@ llvm::Value *Compiler::Compile_ForNode(ForNode *node)
     builder.SetInsertPoint(afterBB);
 
     m_loopStack.pop_back();
+    PopScope();
+
+    return nullptr;
+}
+
+llvm::Value *Compiler::Compile_WhileNode(WhileNode *node)
+{
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
+
+    PushScope();
+
+    // Blocks
+    llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "while.cond", function);
+    llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "while.body", function);
+    llvm::BasicBlock* afterBB = llvm::BasicBlock::Create(context, "while.end", function);
+
+    // continue -> recheck condition
+    // break -> exit loop
+    m_loopStack.push_back({ condBB, afterBB });
+
+    // Initial jump to condition
+    builder.CreateBr(condBB);
+
+    // condition
+    builder.SetInsertPoint(condBB);
+
+    llvm::Value* condVal = CompileNode(node->GetConditionNode());
+    if (!condVal)
+        return nullptr;
+
+    llvm::Value* cond;
+
+    // INT condition
+    if (condVal->getType()->isIntegerTy())
+        cond = builder.CreateICmpNE(condVal, llvm::ConstantInt::get(condVal->getType(), 0), "whilecond");
+    else if (condVal->getType()->isDoubleTy())
+        cond = builder.CreateFCmpONE(condVal, llvm::ConstantFP::get(condVal->getType(), 0.0), "whilecond");
+    else
+    {
+        std::cerr << "Invalid while condition type\n";
+        return nullptr;
+    }
+
+    builder.CreateCondBr(cond, bodyBB, afterBB);
+
+    // body
+    builder.SetInsertPoint(bodyBB);
+
+    CompileNode(node->GetBodyNode());
+
+    // if body didn't already terminate
+    if (!builder.GetInsertBlock()->getTerminator())
+        builder.CreateBr(condBB);
+
+    // after
+    builder.SetInsertPoint(afterBB);
+
+    m_loopStack.pop_back();
+
+    FreeLocalHeapValues();
     PopScope();
 
     return nullptr;

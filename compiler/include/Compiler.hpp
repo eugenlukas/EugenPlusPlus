@@ -84,7 +84,7 @@ private:
     llvm::Value* Compile_UnaryOpNode(UnaryOpNode* node);
     llvm::Value* Compile_IfNode(IfNode* node, llvm::BasicBlock* existingMergeBB = nullptr);
     llvm::Value* Compile_ForNode(ForNode* node);
-	//void Visit_WhileNode(WhileNode& node);
+    llvm::Value* Compile_WhileNode(WhileNode* node);
     llvm::Value* Compile_FuncDefNode(FuncDefNode* node);
     llvm::Value* Compile_CallNode(CallNode* node);
     llvm::Value* Compile_ReturnNode(ReturnNode* node);
