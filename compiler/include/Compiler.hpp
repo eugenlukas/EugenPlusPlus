@@ -15,13 +15,13 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/Value.h>
 #include "llvm/IR/Intrinsics.h"
+#include <llvm/IR/Constants.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
-//#include <lld/Common/Driver.h>
 #include <llvm/IR/LegacyPassManager.h> 
 #include <llvm/Support/CodeGen.h> 
 #include "llvm/TargetParser/Host.h"
@@ -65,6 +65,7 @@ public:
         DeclareFree();
         DeclarePrintf();
         RegisterBuiltins();
+        RegisterConstants();
     }
 
     void SetMainFilepath(const std::string& path) { m_mainFilepath = path; }
@@ -87,6 +88,7 @@ private:
     std::unordered_map<std::string, std::unordered_map<std::string, VarInfo>> m_moduleVariables; // global variables / top-level
     std::vector<LoopContext> m_loopStack;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
+    std::unordered_map<std::string, llvm::Constant*> m_constants;
     std::unordered_map<std::string, std::string>  m_linkedLibs;
     std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_externFunctions;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_externReturnTypeStrings;
@@ -140,6 +142,7 @@ private:
     void DeclareFree();
     void DeclarePrintf();
     void RegisterBuiltins();
+    void RegisterConstants();
 
     llvm::AllocaInst* CreateEntryBlockAlloca(const std::string& name, llvm::Type* type);
     llvm::Value* IntToString(llvm::Value* val);

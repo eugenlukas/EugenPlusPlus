@@ -49,6 +49,16 @@ public:
             return builder.CreateCall(func, { formatStr, arg });
         }
 
+        // bool (i1) -> print "true"/"false" text, not 1/0
+        if (arg->getType()->isIntegerTy(1))
+        {
+            llvm::Value* trueStr  = builder.CreateGlobalStringPtr("true",  "trueStr");
+            llvm::Value* falseStr = builder.CreateGlobalStringPtr("false", "falseStr");
+            llvm::Value* selected = builder.CreateSelect(arg, trueStr, falseStr, "boolStr");
+            formatStr = builder.CreateGlobalStringPtr("%s", "fmt");
+            return builder.CreateCall(func, { formatStr, selected });
+        }
+
         // int
         if (arg->getType()->isIntegerTy())
         {
@@ -58,6 +68,16 @@ public:
                 arg = builder.CreateZExt(arg, builder.getInt32Ty(), "promote");
 
             formatStr = builder.CreateGlobalStringPtr("%d", "fmt");
+            return builder.CreateCall(func, { formatStr, arg });
+        }
+
+        // float / double
+        if (arg->getType()->isFloatingPointTy())
+        {
+            // float must be widened to double
+            if (arg->getType()->isFloatTy())
+                arg = builder.CreateFPExt(arg, builder.getDoubleTy(), "promoteFP");
+            formatStr = builder.CreateGlobalStringPtr("%g", "fmt");
             return builder.CreateCall(func, { formatStr, arg });
         }
 
@@ -92,6 +112,16 @@ public:
             return builder.CreateCall(func, { formatStr, arg });
         }
 
+        // bool (i1) -> print "true"/"false" text, not 1/0
+        if (arg->getType()->isIntegerTy(1))
+        {
+            llvm::Value* trueStr  = builder.CreateGlobalStringPtr("true",  "trueStr");
+            llvm::Value* falseStr = builder.CreateGlobalStringPtr("false", "falseStr");
+            llvm::Value* selected = builder.CreateSelect(arg, trueStr, falseStr, "boolStr");
+            formatStr = builder.CreateGlobalStringPtr("%s\n", "fmt");
+            return builder.CreateCall(func, { formatStr, selected });
+        }
+
         // int
         if (arg->getType()->isIntegerTy())
         {
@@ -101,6 +131,16 @@ public:
                 arg = builder.CreateZExt(arg, builder.getInt32Ty(), "promote");
 
             formatStr = builder.CreateGlobalStringPtr("%d\n", "fmt");
+            return builder.CreateCall(func, { formatStr, arg });
+        }
+
+        // float / double
+        if (arg->getType()->isFloatingPointTy())
+        {
+            // float must be widened to double
+            if (arg->getType()->isFloatTy())
+                arg = builder.CreateFPExt(arg, builder.getDoubleTy(), "promoteFP");
+            formatStr = builder.CreateGlobalStringPtr("%g\n", "fmt");
             return builder.CreateCall(func, { formatStr, arg });
         }
 

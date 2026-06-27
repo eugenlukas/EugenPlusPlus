@@ -328,6 +328,14 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
 {
     std::string name = std::get<std::string>(node->GetVarNameToken().GetValue());
 
+    // compiler-builtin constants (true/false/null/math_pi/...) take priority over user variables, and are resolved before namespaced/user lookups.
+    if (!node->GetIsNamespaced())
+    {
+        auto constIt = m_constants.find(name);
+        if (constIt != m_constants.end())
+            return constIt->second;
+    }
+
     // namespaced access (module::variable)
     if (node->GetIsNamespaced())
     {
@@ -1555,6 +1563,14 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
     if (auto va = dynamic_cast<VarAccessNode*>(node.get()))
     {
         std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
+
+        // 0. compiler constants
+        if (!va->GetIsNamespaced())
+        {
+            auto constantIt = m_constants.find(name);
+            if (constantIt != m_constants.end())
+                return constantIt->second->getType();
+        }
  
         // 1. pre-pass local map (variables assigned above this point in the body)
         auto it = locals.find(name);
@@ -1696,6 +1712,16 @@ void Compiler::RegisterBuiltins()
     m_builtins["free"] = std::make_unique<BuiltinFree>(freeFunc);
     m_builtins["print"] = std::make_unique<BuiltinPrint>(printfFunc);
     m_builtins["println"] = std::make_unique<BuiltinPrintln>(printfFunc);
+}
+
+void Compiler::RegisterConstants()
+{
+    m_constants["true"] = llvm::ConstantInt::get(builder.getInt1Ty(), 1);
+    m_constants["false"] = llvm::ConstantInt::get(builder.getInt1Ty(), 0);
+
+    m_constants["null"] = llvm::ConstantPointerNull::get(llvm::PointerType::get(builder.getInt8Ty(), 0));
+
+    m_constants["math_pi"] = llvm::ConstantFP::get(builder.getDoubleTy(), 3.141592653589793);
 }
 
 llvm::AllocaInst *Compiler::CreateEntryBlockAlloca(const std::string &name, llvm::Type *type)
