@@ -63,7 +63,7 @@ const std::array<std::string, 22> KEYWORDS = {
 	"as",
 	"link",
 	"extern",
-	"CSTRUCT"
+	"struct"
 };
 
 class Token

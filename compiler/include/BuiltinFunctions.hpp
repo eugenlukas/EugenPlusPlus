@@ -52,6 +52,11 @@ public:
         // int
         if (arg->getType()->isIntegerTy())
         {
+            auto* intTy = llvm::cast<llvm::IntegerType>(arg->getType());
+
+            if (intTy->getBitWidth() < 32)
+                arg = builder.CreateZExt(arg, builder.getInt32Ty(), "promote");
+
             formatStr = builder.CreateGlobalStringPtr("%d", "fmt");
             return builder.CreateCall(func, { formatStr, arg });
         }
@@ -90,6 +95,11 @@ public:
         // int
         if (arg->getType()->isIntegerTy())
         {
+            auto* intTy = llvm::cast<llvm::IntegerType>(arg->getType());
+
+            if (intTy->getBitWidth() < 32)
+                arg = builder.CreateZExt(arg, builder.getInt32Ty(), "promote");
+
             formatStr = builder.CreateGlobalStringPtr("%d\n", "fmt");
             return builder.CreateCall(func, { formatStr, arg });
         }

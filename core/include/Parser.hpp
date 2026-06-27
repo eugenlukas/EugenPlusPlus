@@ -96,7 +96,7 @@ public:
 	ParseResult ForExpr();
 	ParseResult WhileExpr();
 	ParseResult FuncDef();
-	ParseResult CStructDef();
+	ParseResult StructDef();
 
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b = nullptr);
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::pair<std::string, std::string>> typeValueOps, std::function<ParseResult()> func_b = nullptr);

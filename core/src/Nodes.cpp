@@ -312,13 +312,13 @@ std::string ExternNode::Repr()
 	return "extern node";
 }
 
-CStructDefNode::CStructDefNode(Token varNameTok, std::vector<CStructAttributeToken> attributeToks)
+StructDefNode::StructDefNode(Token varNameTok, std::vector<StructAttributeToken> attributeToks)
 {
 	this->varNameTok = varNameTok;
 	this->attributeToks = attributeToks;
 }
 
-std::string CStructDefNode::Repr()
+std::string StructDefNode::Repr()
 {
-	return "<CSTRUCT DEFINITION '" + std::get<std::string>(varNameTok.GetValue()) + "'>";
+	return "<STRUCT DEFINITION '" + std::get<std::string>(varNameTok.GetValue()) + "'>";
 }

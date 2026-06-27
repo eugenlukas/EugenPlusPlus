@@ -475,7 +475,7 @@ ParseResult Parser::Atom()
 			res.RegisterAdvancement();
 
 			if (currentToken.GetType() != TT_EQ)
-				res.Success(std::make_unique<VarAccessNode>(varNameTok, namespaceName));
+				return res.Success(std::make_unique<VarAccessNode>(varNameTok, namespaceName));
 			else // Handle var assignment through namespace
 			{
 				Advance();
@@ -544,15 +544,15 @@ ParseResult Parser::Atom()
 			return res;
 		return res.Success(funcDef);
 	}
-	else if (tok.Matches(TT_KEYWORD, "CSTRUCT"))
+	else if (tok.Matches(TT_KEYWORD, "struct"))
 	{
-		std::shared_ptr<Node> structDef = res.Register(CStructDef());
+		std::shared_ptr<Node> structDef = res.Register(StructDef());
 		if (res.HasError())
 			return res;
 		return res.Success(structDef);
 	}
 
-	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-', '(', '[', 'if', 'for', 'while', 'func' or 'CSTRUCT'"));
+	return res.Failure(std::make_unique<InvalidSyntaxError>(tok.GetPosStart(), tok.GetPosEnd(), "Expected int, float, identifier, '+', '-', '(', '[', 'if', 'for', 'while', 'func' or 'struct'"));
 }
 
 ParseResult Parser::ListExpr()
@@ -1009,12 +1009,12 @@ ParseResult Parser::FuncDef()
 	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, body, false));
 }
 
-ParseResult Parser::CStructDef()
+ParseResult Parser::StructDef()
 {
 	ParseResult res;
 
-	if (!currentToken.Matches(TT_KEYWORD, "CSTRUCT"))
-		res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'CSTRUCT'"));
+	if (!currentToken.Matches(TT_KEYWORD, "struct"))
+		res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'struct'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -1034,7 +1034,7 @@ ParseResult Parser::CStructDef()
 	Advance();
 	res.RegisterAdvancement();
 
-	std::vector<CStructAttributeToken> attributeToks;
+	std::vector<StructAttributeToken> attributeToks;
 
 	while (currentToken.GetType() == TT_IDENTIFIER)
 	{
@@ -1063,7 +1063,7 @@ ParseResult Parser::CStructDef()
 		Advance();
 		res.RegisterAdvancement();
 
-		attributeToks.push_back(CStructAttributeToken(attributeType, attributeName));
+		attributeToks.push_back(StructAttributeToken(attributeType, attributeName));
 	}
 
 	if (currentToken.GetType() != TT_RCURLYBRACKET)
@@ -1072,7 +1072,7 @@ ParseResult Parser::CStructDef()
 	Advance();
 	res.RegisterAdvancement();
 
-	return res.Success(std::make_shared<CStructDefNode>(varNameTok, attributeToks));
+	return res.Success(std::make_shared<StructDefNode>(varNameTok, attributeToks));
 }
 
 ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b)

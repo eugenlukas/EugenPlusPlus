@@ -106,8 +106,24 @@ void Compiler::LinkObjectFile(const std::string &filepath)
         linker + " " +
         filepath + "output.o " +
         "-L\"" + libPath + "\" " +
-        "-lruntime " +
-        "-o \"" + exeName + "\"";
+        "-lruntime ";
+    
+    // append each natively linked library
+    for (auto& [alias, libFilepath] : m_linkedLibs)
+    {
+        std::filesystem::path lp(libFilepath);
+        std::string libDir = lp.parent_path().string();
+ 
+        cmd += "\"" + libFilepath + "\" ";
+#ifndef _WIN32
+        // On Linux/macOS encode the library's directory into the binary's
+        // rpath so dlopen/the dynamic linker finds it automatically.
+        cmd += "-Wl,-rpath,\"" + libDir + "\" ";
+#endif
+
+    }
+
+    cmd += "-o \"" + exeName + "\"";
 
     int result = std::system(cmd.c_str());
 
@@ -166,16 +182,13 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
         return Compile_ModuleNode(n);
 
     if (auto n = dynamic_cast<LinkNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'link' node\n";
-        return nullptr;
-    }
+        return Compile_LinkNode(n);
 
     if (auto n = dynamic_cast<ExternNode*>(node.get()))
-    {
-        std::cerr << "ToDo: Implement 'extern' node\n";
-        return nullptr;
-    }
+        return Compile_ExternNode(n);
+
+    if (auto n = dynamic_cast<StructDefNode*>(node.get()))
+        return Compile_StructDefNode(n);
 
     if (node.get() != nullptr)
         std::cerr << "Unknown node type '" << typeid(*node.get()).name() << "'\n";
@@ -320,6 +333,62 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
     {
         const std::string namespaceName = node->GetNamespaceName().value();
 
+        // struct fields access
+        auto structIt = m_structs.varToType.find(namespaceName);
+        if (structIt != m_structs.varToType.end())
+        {
+            const std::string& structTypeName = structIt->second;
+
+            // find the field index by name
+            auto fieldsIt = m_structs.fields.find(structTypeName);
+            if (fieldsIt == m_structs.fields.end())
+            {
+                std::cerr << "VarAccess error: no fields for struct '" << structTypeName << "'\n";
+                return nullptr;
+            }
+
+            const auto& fields = fieldsIt->second;
+            int fieldIdx = -1;
+            for (int i = 0; i < (int)fields.size(); ++i)
+            {
+                if (fields[i].attributeName == name)
+                {
+                    fieldIdx = i;
+                    break;
+                }
+            }
+
+            if (fieldIdx < 0)
+            {
+                std::cerr << "VarAccess error: Field '" << name << "' not found in struct '" << structTypeName << "'\n";
+                return nullptr;
+            }
+
+            // load the struct* stored in the variable
+            VarInfo* var = FindVariable(namespaceName);
+            if (!var)
+            {
+                std::cerr << "VarAccess error: Struct variable '" << namespaceName << "' not found\n";
+                return nullptr;
+            }
+
+            llvm::StructType* structTy = m_structs.types.at(structTypeName);
+            llvm::Value* fieldPtr;
+
+            if (var->alloca->getAllocatedType()->isStructTy())
+                fieldPtr = builder.CreateStructGEP(structTy, var->alloca, (unsigned)fieldIdx, name + "Ptr");
+            else
+            {
+                llvm::Value* structPtr = builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, namespaceName);
+                fieldPtr = builder.CreateStructGEP(structTy, structPtr, (unsigned)fieldIdx, name + "Ptr");
+            }
+
+            llvm::Type* fieldTy = structTy->getElementType((unsigned)fieldIdx);
+
+            return builder.CreateLoad(fieldTy, fieldPtr, name);
+        }
+
+        // module-variable access
         auto modIt = m_moduleVariables.find(namespaceName);
         if (modIt == m_moduleVariables.end())
         {
@@ -346,14 +415,126 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
         return nullptr;
     }
 
-    return builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, name);
+    llvm::Value* val = builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, name);
+
+    // When used as a plain value e.g. passed on to an extern that expects the struct by value, dereference the pointer to get the struct itself
+    if (val->getType()->isPointerTy() && m_structs.IsStructVar(name))
+    {
+        const std::string& structTypeName = m_structs.varToType.at(name);
+        llvm::StructType* structTy = m_structs.types.at(structTypeName);
+        val = builder.CreateLoad(structTy, val, name + ".val");
+    }
+
+    return val;
 }
 
 llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
 {
     std::string name = std::get<std::string>(node->GetVarNameToken().GetValue());
+
+    // struct field assignment (e.g. red::r = 255)
+    if (node->GetIsNamespaced())
+    {
+        const std::string& ownerName = node->GetNamespaceName().value();
+
+        if (!m_structs.IsStructVar(ownerName))
+        {
+            std::cerr << "VarAssign error: '" << ownerName << "' is not a struct variable\n";
+            return nullptr;
+        }
+
+        const std::string& structTypeName = m_structs.varToType.at(ownerName);
+        auto fieldsIt = m_structs.fields.find(structTypeName);
+        if (fieldsIt == m_structs.fields.end())
+        {
+            std::cerr << "VarAssign error: no fields for struct '" << structTypeName << "'\n";
+            return nullptr;
+        }
+
+        const auto& fields = fieldsIt->second;
+        int fieldIdx = -1;
+        for (int i = 0; i < (int)fields.size(); ++i)
+        {
+            if (fields[i].attributeName == name)
+            {
+                fieldIdx = i;
+                break;
+            }
+        }
+
+        if (fieldIdx < 0)
+        {
+            std::cerr << "VarAssign error: field '" << name << "' not found in struct '" << structTypeName << "'\n";
+            return nullptr;
+        }
+
+        llvm::Value* rhs = CompileNode(node->GetValueNode());
+        if (!rhs)
+            return nullptr;
+
+        VarInfo* ownerVar = FindVariable(ownerName);
+        if (!ownerVar)
+        {
+            std::cerr << "VarAssign error: variable '" << ownerName << "' not found\n";
+            return nullptr;
+        }
+
+        llvm::StructType* structTy = m_structs.types.at(structTypeName);
+        llvm::Value* fieldPtr;
+
+        if (ownerVar->alloca->getAllocatedType()->isStructTy())
+            fieldPtr = builder.CreateStructGEP(structTy, ownerVar->alloca, (unsigned)fieldIdx, name + "Ptr");
+        else
+        {
+            llvm::Value* structPtr = builder.CreateLoad(ownerVar->alloca->getAllocatedType(), ownerVar->alloca, ownerName);
+            fieldPtr =  builder.CreateStructGEP(structTy, structPtr, (unsigned)fieldIdx, name + "Ptr");
+        }
+
+        // widen an i32 RHS into whatever the field actually stores
+        llvm::Type* fieldTy = structTy->getElementType((unsigned)fieldIdx);
+        if (rhs->getType() != fieldTy && rhs->getType()->isIntegerTy() && fieldTy->isIntegerTy())
+            rhs = builder.CreateTruncOrBitCast(rhs, fieldTy, "fieldCast");
+
+        builder.CreateStore(rhs, fieldPtr);
+        return rhs;
+    }
+
+    // struct instantiation (e.g. var red = Color)
+    if (auto* varNode = dynamic_cast<VarAccessNode*>(node->GetValueNode().get()))
+    {
+        if (!varNode->GetIsNamespaced())
+        {
+            std::string typeName = std::get<std::string>(varNode->GetVarNameToken().GetValue());
+            if (m_structs.HasType(typeName))
+            {
+                llvm::StructType* structTy = m_structs.types.at(typeName);
+                llvm::AllocaInst* alloca = CreateEntryBlockAlloca(name, structTy);
+
+                builder.CreateStore(llvm::ConstantAggregateZero::get(structTy), alloca);
+                SetVariable(name, { alloca, false });
+                m_structs.varToType[name] = typeName;
+
+                return alloca;
+            }
+        }
+    }
+
+    // normal assignment
     llvm::Value* value = CompileNode(node->GetValueNode());
     if (!value) return nullptr;
+
+    // if RHS is a call to an extern that returns a struct, record the mapping
+    if (value->getType()->isStructTy())
+    {
+        for (auto& [typeName, structTy] : m_structs.types)
+        {
+            if (structTy == value->getType())
+            {
+                m_structs.varToType[name] = typeName;
+                break;
+            }
+        }
+    }
     
     llvm::Type* type = value->getType();
     llvm::AllocaInst* alloca = nullptr;
@@ -400,7 +581,7 @@ llvm::Value *Compiler::Compile_UnaryOpNode(UnaryOpNode *node)
         if (opToken == TT_PLUS)
             return val;
 
-        if (node->GetOpToken().Matches(TT_KEYWORD, "NOT"))  // logical not
+        if (node->GetOpToken().Matches(TT_KEYWORD, "not"))  // logical not
         {
             llvm::Value* cmp = builder.CreateICmpEQ(val, llvm::ConstantInt::get(ty, 0), "notTmp");
 
@@ -420,7 +601,7 @@ llvm::Value *Compiler::Compile_UnaryOpNode(UnaryOpNode *node)
         if (opToken == TT_PLUS)
             return val;
 
-        if (node->GetOpToken().Matches(TT_KEYWORD, "NOT")) // logical not
+        if (node->GetOpToken().Matches(TT_KEYWORD, "not")) // logical not
         {
             llvm::Value* cmp = builder.CreateFCmpUEQ(val, llvm::ConstantFP::get(ty, 0.0), "fnotTmp");
 
@@ -674,8 +855,22 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     llvm::Type* returnType = InferenceReturnType(node->GetBodyNode(), node->GetShouldAutoReturn());
 
-    // Function arg types (all args are i32 for now)
-    std::vector<llvm::Type*> argTypes(node->ArgNameToks().size(), builder.getInt32Ty());
+    // scan the body for "param::field" usage to detect struct params
+    std::vector<std::string> structParamTypes; // parallel to ArgNameToks; "" = not a struct
+    std::vector<llvm::Type*> argTypes;
+
+    for (auto& argTok : node->ArgNameToks())
+    {
+        std::string paramName = std::get<std::string>(argTok.argNameTok.GetValue());
+        std::string structTypeName = ScanForStructParamUsage(paramName, node->GetBodyNode());
+
+        structParamTypes.push_back(structTypeName);
+
+        if (!structTypeName.empty())
+            argTypes.push_back(llvm::PointerType::get(m_structs.types.at(structTypeName), 0));
+        else
+            argTypes.push_back(builder.getInt32Ty());
+    }
 
     llvm::FunctionType* funcType = llvm::FunctionType::get(returnType, argTypes, false);
 
@@ -700,11 +895,20 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     PushScope();
 
     // Store and allocate variables
-    for (auto& arg : func->args())
     {
-        llvm::AllocaInst* alloca = CreateEntryBlockAlloca(arg.getName().str(), arg.getType());
-        builder.CreateStore(&arg, alloca);
-        SetVariable(arg.getName().str(), { alloca, false });
+        size_t i = 0;
+        for (auto& arg : func->args())
+        {
+            llvm::AllocaInst* alloca = CreateEntryBlockAlloca(arg.getName().str(), arg.getType());
+            builder.CreateStore(&arg, alloca);
+            SetVariable(arg.getName().str(), { alloca, false });
+
+            // register struct-ptr params so param::field resolves during body compilation
+            if (i < structParamTypes.size() && ! structParamTypes[i].empty())
+                m_structs.varToType[arg.getName().str()] = structParamTypes[i];
+
+            ++i;
+        }
     }
 
     // Compile body
@@ -754,6 +958,38 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
     {
         const std::string namespaceName = varAccess->GetNamespaceName().value();
 
+        // call function from extern .dll or .so file
+        auto externModIt = m_externFunctions.find(namespaceName);
+        if (externModIt != m_externFunctions.end())
+        {
+            auto externFuncIt = externModIt->second.find(name);
+            if (externFuncIt != externModIt->second.end())
+            {
+                llvm::Function* externFunc = externFuncIt->second;
+                llvm::FunctionType* externFunctTy = externFunc->getFunctionType();
+
+                std::vector<llvm::Value*> args;
+                for (size_t i = 0; i < node->GetArgNodes().size(); ++i)
+                {
+                    llvm::Value* argVal = CompileNode(node->GetArgNodes()[i]);
+                    if (!argVal)
+                        return nullptr;
+
+                    // C ABI structs are passed by value.
+                    // argVal is already a struct value (Compile_VarAccessNode loads it from its alloca), so no conversion needed.
+                    args.push_back(argVal);
+                }
+
+                if (externFunctTy->getReturnType()->isVoidTy())
+                {
+                    builder.CreateCall(externFunc, args);
+                    return llvm::ConstantInt::get(builder.getInt32Ty(), 0);
+                }
+                return builder.CreateCall(externFunc, args, "externCallTmp");
+            }
+        }
+
+        // call function in separate module
         auto modIt = m_moduleFunctions.find(namespaceName);
         if (modIt == m_moduleFunctions.end())
         {
@@ -773,9 +1009,37 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         std::vector<llvm::Value*> args;
         for (auto& argNode : node->GetArgNodes())
         {
+            // mirrors the same by-reference logic as the local user-function call path below, so struct args behave consistently
+            if (auto* va = dynamic_cast<VarAccessNode*>(argNode.get()); va && !va->GetIsNamespaced())
+            {
+                const std::string& varName = std::get<std::string>(va->GetVarNameToken().GetValue());
+                VarInfo* var = FindVariable(varName);
+                if (var)
+                {
+                    if (var->alloca->getAllocatedType()->isStructTy())
+                    {
+                        args.push_back(var->alloca);
+                        continue;
+                    }
+                    if (var->alloca->getAllocatedType()->isPointerTy() && m_structs.IsStructVar(varName))
+                    {
+                        llvm::Value* ptrVal = builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, varName);
+                        args.push_back(ptrVal);
+                        continue;
+                    }
+                }
+            }
+
             llvm::Value* argVal = CompileNode(argNode);
             if (!argVal)
                 return nullptr;
+
+            if (argVal->getType()->isStructTy())
+            {
+                llvm::AllocaInst* tmp = CreateEntryBlockAlloca("structArg", argVal->getType());
+                builder.CreateStore(argVal, tmp);
+                argVal = tmp;
+            }
 
             args.push_back(argVal);
         }
@@ -805,7 +1069,44 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
 
     std::vector<llvm::Value*> args;
     for (auto& argNode : node->GetArgNodes())
-        args.push_back(CompileNode(argNode));
+    {
+        // if the argument is a plain variable that already holds a struct, pass the address of its *existing* alloca directly
+        if (auto* va = dynamic_cast<VarAccessNode*>(argNode.get()); va && !va->GetIsNamespaced())
+        {
+            const std::string& varName = std::get<std::string>(va->GetVarNameToken().GetValue());
+            VarInfo* var = FindVariable(varName);
+            if (var)
+            {
+                if (var->alloca->getAllocatedType()->isStructTy())
+                {
+                    // struct stored directly -> pass the address of the real storage
+                    args.push_back(var->alloca);
+                    continue;
+                }
+                if (var->alloca->getAllocatedType()->isPointerTy() && m_structs.IsStructVar(varName))
+                {
+                    // already a struct pointer (e.g. forwarding a param) -> pass it through as-is
+                    llvm::Value* ptrVal = builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, varName);
+                    args.push_back(ptrVal);
+                    continue;
+                }
+            }
+        }
+
+        llvm::Value* argVal = CompileNode(argNode);
+        if (!argVal)
+            return nullptr;
+
+        // non-variable expression producing a struct value (e.g. a call that returns a struct) has no original storage to alias, so a temp is the only option here
+        if (argVal->getType()->isStructTy())
+        {
+            llvm::AllocaInst* tmp = CreateEntryBlockAlloca("structArg", argVal->getType());
+            builder.CreateStore(argVal, tmp);
+            argVal = tmp;
+        }
+
+        args.push_back(argVal);
+    }
 
     return builder.CreateCall(func, args, "callTmp");
 }
@@ -936,6 +1237,132 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
     return nullptr;
 }
 
+llvm::Value *Compiler::Compile_LinkNode(LinkNode *node)
+{
+    std::filesystem::path filepath(std::get<std::string>(node->GetFilepathToken().GetValue()));
+
+    // resolve relative paths against the current source file
+    if (!filepath.is_absolute())
+    {
+        std::filesystem::path base(m_mainFilepath);
+        filepath = base.parent_path() / filepath;
+    }
+
+    if (!std::filesystem::exists(filepath))
+    {
+        std::cerr << "Link file not found: '" << filepath.string() << "'\n";
+        return nullptr;
+    }
+
+    // normalize
+    filepath = std::filesystem::canonical(filepath);
+
+    m_linkedLibs[node->GetAlias()] = filepath.string();
+
+    return nullptr;
+}
+
+llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
+{
+    const std::string& moduleAlias = node->GetModuleAlias();
+    const std::string& functionName = node->GetFunctionName();
+    const std::string& signature = node->GetSignature();
+
+    // validate that the library was linked first
+    if (m_linkedLibs.find(moduleAlias) == m_linkedLibs.end())
+    {
+        std::cerr << "Extern error: linked module alias '" << moduleAlias << "' not found. Did you forgot '#link \"lib.so\" as " << moduleAlias << "'\n";
+        return nullptr;
+    }
+
+    // parse signature "returnType(arg1, arg2, ...)"
+    auto openParen = signature.find('(');
+    auto closeParen = signature.find(')');
+
+    if (openParen == std::string::npos || closeParen == std::string::npos || closeParen < openParen)
+    {
+        std::cerr << "Extern error: invalid signature '" << signature << "' for function '" << functionName << "'\n";
+        return nullptr;
+    }
+
+    std::string returnTypeString = signature.substr(0, openParen);
+    std::string argsString = signature.substr(openParen + 1, closeParen - openParen - 1);
+
+    // trim whitespace from the return type string
+    auto trimStr = [](std::string& s) { s.erase(0, s.find_first_not_of(" \t")); s.erase(s.find_last_not_of(" \t") + 1); };
+    trimStr(returnTypeString);
+
+    // build llvm type lists
+    llvm::Type* returnType;
+    if (m_structs.HasType(returnTypeString))
+        returnType = m_structs.types.at(returnTypeString);
+    else
+        returnType = StringToLLVMType(returnTypeString);
+
+    std::vector<llvm::Type*> argTypes;
+    if (!argsString.empty())
+    {
+        std::stringstream ss(argsString);
+        std::string typeToken;
+        while (std::getline(ss, typeToken, ','))
+        {
+            trimStr(typeToken);
+            // Extern functions follow C ABI -> structs are passed by value, so map a struct name to its struct type, not a pointer
+            llvm::Type* argTy = m_structs.HasType(typeToken) ? static_cast<llvm::Type*>(m_structs.types.at(typeToken)) : StringToLLVMType(typeToken);
+            argTypes.push_back(argTy);
+        }
+    }
+
+    // declare or reuse the function in the LLVM module. if the same native function is declared twice we reuse the existing declaration rather than creating a duplicate
+    llvm::Function* func = module->getFunction(functionName);
+    if (!func)
+    {
+        llvm::FunctionType* funcType = llvm::FunctionType::get(returnType, argTypes, /*isVarArg=*/false);
+
+        func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, functionName, module.get());
+    }
+    else
+    {
+        // sanity-check
+        llvm::FunctionType* existing = func->getFunctionType();
+        if (existing->getReturnType() != returnType || existing->getNumParams() != static_cast<unsigned>(argTypes.size()))
+        {
+            std::cerr << "Extern error: conflicting declarations for '" << functionName << "'\n";
+            return nullptr;
+        }
+    }
+
+    m_externFunctions[moduleAlias][functionName] = func;
+    m_externReturnTypeStrings[moduleAlias][functionName] = returnTypeString;
+
+    return nullptr;
+}
+
+llvm::Value *Compiler::Compile_StructDefNode(StructDefNode *node)
+{
+    std::string structName = std::get<std::string>(node->GetVarNameTok().GetValue());
+
+    // avoid reregistering the same struct type
+    if (m_structs.HasType(structName))
+    {
+        std::cerr << "Struct warning: '" << structName << "' is already defined; Ignoring redefinition\n";
+        return nullptr;
+    }
+
+    // build the ordered list of llvm field types
+    std::vector<llvm::Type*> fieldTypes;
+    for (const auto& attr : node->GetAttributeToks())
+        fieldTypes.push_back(StringToLLVMType(attr.attributeType));
+
+    // create a named (non-opaque) struct type in this context
+    llvm::StructType* structType = llvm::StructType::create(context, fieldTypes, structName);
+
+    m_structs.types[structName] = structType;
+    m_structs.fields[structName] = node->GetAttributeToks();
+
+    return nullptr;
+}
+
 void Compiler::PushScope()
 {
     m_scopes.emplace_back();
@@ -991,6 +1418,105 @@ void Compiler::FreeLocalHeapValues()
 
         builder.CreateCall(freeFunc, { loaded });
     }
+}
+
+std::string Compiler::ScanForStructParamUsage(const std::string &paramName, std::shared_ptr<Node> body)
+{
+    if (!body)
+        return "";
+
+    // paramName::field (read access)
+    if (auto* va = dynamic_cast<VarAccessNode*>(body.get()))
+    {
+        if (va->GetIsNamespaced() && va->GetNamespaceName().value() == paramName)
+        {
+            std::string fieldName = std::get<std::string>(va->GetVarNameToken().GetValue());
+            for (auto& [typeName, fields] : m_structs.fields)
+            {
+                for (auto& field : fields)
+                {
+                    if (field.attributeName == fieldName)
+                        return typeName;
+                }
+            }
+        }
+        return "";
+    }
+
+    // paramName::field = value (write access)
+    if (auto* assign = dynamic_cast<VarAssignNode*>(body.get()))
+    {
+        if (assign->GetIsNamespaced() && assign->GetNamespaceName().value() == paramName)
+        {
+            std::string fieldName = std::get<std::string>(assign->GetVarNameToken().GetValue());
+            for (auto& [typeName, fields] : m_structs.fields)
+            {
+                for (auto& field : fields)
+                {
+                    if (field.attributeName == fieldName)
+                        return typeName;
+                }
+            }
+        }
+        if (auto r = ScanForStructParamUsage(paramName, assign->GetValueNode()); !r.empty())
+            return r;
+        return "";
+    }
+
+    // --- recurse into child nodes ---
+
+    if (auto* list = dynamic_cast<ListNode*>(body.get()))
+    {
+        for (auto& elem : list->GetElementNodes())
+            if (auto r = ScanForStructParamUsage(paramName, elem); !r.empty())
+                return r;
+        return "";
+    }
+
+    if (auto* call = dynamic_cast<CallNode*>(body.get()))
+    {
+        for (auto& arg : call->GetArgNodes())
+            if (auto r = ScanForStructParamUsage(paramName, arg); !r.empty())
+                return r;
+        return "";
+    }
+
+    if (auto* bin = dynamic_cast<BinOpNode*>(body.get()))
+    {
+        if (auto r = ScanForStructParamUsage(paramName, bin->GetLeftNode());  !r.empty()) return r;
+        if (auto r = ScanForStructParamUsage(paramName, bin->GetRightNode()); !r.empty()) return r;
+        return "";
+    }
+
+    if (auto* un = dynamic_cast<UnaryOpNode*>(body.get()))
+        return ScanForStructParamUsage(paramName, un->GetNode());
+
+    if (auto* ret = dynamic_cast<ReturnNode*>(body.get()))
+        return ret->GetNodeToReturn().has_value()
+                   ? ScanForStructParamUsage(paramName, ret->GetNodeToReturn().value())
+                   : "";
+
+    if (auto* ifNode = dynamic_cast<IfNode*>(body.get()))
+    {
+        for (auto& c : ifNode->GetCases())
+            if (auto r = ScanForStructParamUsage(paramName, c.GetExpr()); !r.empty())
+                return r;
+        if (ifNode->GetElseCase())
+            return ScanForStructParamUsage(paramName, ifNode->GetElseCase());
+        return "";
+    }
+
+    if (auto* whileNode = dynamic_cast<WhileNode*>(body.get()))
+    {
+        if (auto r = ScanForStructParamUsage(paramName, whileNode->GetConditionNode()); !r.empty())
+            return r;
+        return ScanForStructParamUsage(paramName, whileNode->GetBodyNode());
+    }
+
+    if (auto* forNode = dynamic_cast<ForNode*>(body.get()))
+        return ScanForStructParamUsage(paramName, forNode->GetBodyNode());
+
+    return "";
 }
 
 // returns the LLVM type a single expression will produce. 'locals' carries variable types tracked by InferReturnTypeBlock
@@ -1186,6 +1712,63 @@ llvm::Value *Compiler::IntToString(llvm::Value *val)
     llvm::Value* intToStrVal = builder.CreateCall(intToStrFunc, { val }, "intStrTmp");
     m_heapValues.insert(intToStrVal);
     return intToStrVal;
+}
+
+// Supported primitive names:
+//   bool                        -> i1
+//   uint8 / int8 / char         -> i8
+//   uint16 / int16              -> i16
+//   int / int32 / uint32        -> i32
+//   int64 / uint64              -> i64
+//   float                       -> f32
+//   double                      -> f64
+//   string                      -> ptr (i8*)
+//   void                        -> void
+//   <StructName>                -> ptr to the registered StructType
+llvm::Type *Compiler::StringToLLVMType(const std::string &typeName)
+{
+    // 1-bit boolean
+    if (typeName == "bool")
+        return builder.getInt1Ty();
+ 
+    // 8-bit integers
+    if (typeName == "uint8" || typeName == "int8" || typeName == "char")
+        return builder.getInt8Ty();
+ 
+    // 16-bit integers
+    if (typeName == "uint16" || typeName == "int16")
+        return builder.getInt16Ty();
+ 
+    // 32-bit integers
+    if (typeName == "int" || typeName == "int32" || typeName == "uint32")
+        return builder.getInt32Ty();
+ 
+    // 64-bit integers
+    if (typeName == "int64" || typeName == "uint64")
+        return builder.getInt64Ty();
+ 
+    // floating-point
+    if (typeName == "float")
+        return builder.getFloatTy();   // 32-bit IEEE float
+ 
+    if (typeName == "double")
+        return builder.getDoubleTy();
+ 
+    // pointer-like / strings
+    if (typeName == "string")
+        return llvm::PointerType::get(builder.getInt8Ty(), 0);
+ 
+    // void
+    if (typeName == "void")
+        return llvm::Type::getVoidTy(context);
+ 
+    // named struct defined earlier. Passed by pointer when used as a parameter
+    auto it = m_structs.types.find(typeName);
+    if (it != m_structs.types.end())
+        return llvm::PointerType::get(it->second, 0);
+ 
+    std::cerr << "StringToLLVMType: unknow type '" << typeName << "', defaulting to i32\n";
+    return builder.getInt32Ty();
 }
 
 llvm::Value *Compiler::CreateFormatString(const std::string &fmt)

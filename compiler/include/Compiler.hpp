@@ -21,7 +21,7 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
-#include <lld/Common/Driver.h>
+//#include <lld/Common/Driver.h>
 #include <llvm/IR/LegacyPassManager.h> 
 #include <llvm/Support/CodeGen.h> 
 #include "llvm/TargetParser/Host.h"
@@ -31,6 +31,20 @@ struct VarInfo
 {
     llvm::AllocaInst* alloca;
     bool isHeapAllocated;
+};
+
+// Bundles everything the compiler needs to know about struct definitions
+struct StructRegistry
+{
+    // struct name - llvm named struct type
+    std::unordered_map<std::string, llvm::StructType*> types;
+    // struct name - ordered attribute list
+    std::unordered_map<std::string, std::vector<StructAttributeToken>> fields;
+    // Variable name - struct name
+    std::unordered_map<std::string, std::string> varToType;
+
+    bool HasType(const std::string& name) const { return types.count(name) > 0; }
+    bool IsStructVar(const std::string& varName) const { return varToType.count(varName) > 0; }
 };
 
 struct LoopContext
@@ -73,6 +87,10 @@ private:
     std::unordered_map<std::string, std::unordered_map<std::string, VarInfo>> m_moduleVariables; // global variables / top-level
     std::vector<LoopContext> m_loopStack;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
+    std::unordered_map<std::string, std::string>  m_linkedLibs;
+    std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_externFunctions;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_externReturnTypeStrings;
+    StructRegistry m_structs;
 
     llvm::Function* concatFunc;
     llvm::Function* intToStrFunc;
@@ -97,6 +115,9 @@ private:
     llvm::Value* Compile_ContinueNode(ContinueNode* node);
     llvm::Value* Compile_BreakNode(BreakNode* node);
     llvm::Value* Compile_ModuleNode(ModuleNode* node);
+    llvm::Value* Compile_LinkNode(LinkNode* node);
+    llvm::Value* Compile_ExternNode(ExternNode* node);
+    llvm::Value* Compile_StructDefNode(StructDefNode* node);
 
     void PushScope();
     void PopScope();
@@ -106,6 +127,8 @@ private:
     // flattens m_scopes into a single name→VarInfo map so we can snapshot all currently visible variables before compiling a module and diff afterwards
     std::unordered_map<std::string, VarInfo> CollectAllVariables() const;
     void FreeLocalHeapValues();
+    // recursively scans a function body for any "paramName::field" access or assignment. Returns the struct type name whose fields match, or "" if the parameter is not used as a struct inside this body.
+    std::string ScanForStructParamUsage(const std::string& paramName, std::shared_ptr<Node> body);
 
     using LocalTypeMap = std::unordered_map<std::string, llvm::Type*>;
     llvm::Type* InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap& locals);
@@ -120,6 +143,7 @@ private:
 
     llvm::AllocaInst* CreateEntryBlockAlloca(const std::string& name, llvm::Type* type);
     llvm::Value* IntToString(llvm::Value* val);
+    llvm::Type* StringToLLVMType(const std::string& typeName);
     llvm::Value* CreateFormatString(const std::string& fmt);
 
     std::string DetectLinker();

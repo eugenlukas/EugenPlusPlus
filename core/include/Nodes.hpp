@@ -11,9 +11,9 @@ struct ArgNameToken
 	bool byReference;
 };
 
-struct CStructAttributeToken
+struct StructAttributeToken
 {
-	CStructAttributeToken(std::string attributeType, std::string attributeName) : attributeType(attributeType), attributeName(attributeName) {}
+	StructAttributeToken(std::string attributeType, std::string attributeName) : attributeType(attributeType), attributeName(attributeName) {}
 
 	std::string attributeType;
 	std::string attributeName;
@@ -310,16 +310,16 @@ private:
 	std::string signature;
 };
 
-class CStructDefNode : public Node
+class StructDefNode : public Node
 {
 public:
-	CStructDefNode(Token varNameTok, std::vector<CStructAttributeToken> attributeToks);
+	StructDefNode(Token varNameTok, std::vector<StructAttributeToken> attributeToks);
 
 	std::string Repr() override;
 	Token GetVarNameTok() { return varNameTok; }
-	std::vector<CStructAttributeToken> GetAttributeToks() { return attributeToks; }
+	std::vector<StructAttributeToken> GetAttributeToks() { return attributeToks; }
 
 private:
 	Token varNameTok;
-	std::vector<CStructAttributeToken> attributeToks;
+	std::vector<StructAttributeToken> attributeToks;
 };
