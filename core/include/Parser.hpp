@@ -17,6 +17,8 @@ public:
 			error = std::make_unique<Error>(*other.error);
 		}
 		node = other.node;
+		advancementCount = other.advancementCount;
+		toReverseCount = other.toReverseCount;
 	}
 
 	ParseResult& operator=(const ParseResult& other)
@@ -32,6 +34,8 @@ public:
 				error.reset();
 			}
 			node = other.node;
+			advancementCount = other.advancementCount;
+			toReverseCount = other.toReverseCount;
 		}
 		return *this;
 	}

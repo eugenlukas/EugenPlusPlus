@@ -34,14 +34,15 @@ constexpr char TT_ARROW[]			= "ARROW";
 constexpr char TT_NEWLINE[]			= "NEWLINE";
 constexpr char TT_RCURLYBRACKET[]	= "RCURLYBRACKET";
 constexpr char TT_HASH[]			= "HASH";
-constexpr char TT_DBLCOLON[]		= "DBLCONON";
+constexpr char TT_COLON[]			= "COLON";
+constexpr char TT_DBLCOLON[]		= "DBLCOLON";
 constexpr char TT_EOF[]				= "EOF";
 
 constexpr char DIGITS[]				= "0123456789";
 constexpr char LETTERS[]			= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 constexpr char LETTERS_DIGITS[]		= "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-const std::array<std::string, 22> KEYWORDS = {
+const std::array<std::string, 23> KEYWORDS = {
 	"var",
 	"and",
 	"or",
@@ -56,6 +57,7 @@ const std::array<std::string, 22> KEYWORDS = {
 	"while",
 	"func",
 	"ref",
+	"dyn",
 	"return",
 	"continue",
 	"break",

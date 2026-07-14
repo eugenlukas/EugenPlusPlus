@@ -80,12 +80,16 @@ class ListNode : public Node
 public:
 	ListNode();
 	ListNode(std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd);
+	ListNode(std::string listType, bool dynSize, int elementSize, std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd);
 
 	std::string Repr() override;
 	std::vector<std::shared_ptr<Node>> GetElementNodes() { return elementNodes; }
 
 private:
 	std::vector<std::shared_ptr<Node>> elementNodes;
+	bool dynamicSize = false;
+	int elementSize = 0;
+	std::string listType = "";
 };
 
 class VarAccessNode : public Node
@@ -107,11 +111,12 @@ private:
 class VarAssignNode : public Node
 {
 public:
-	VarAssignNode(Token varNameTok, std::shared_ptr<Node> node, bool isDeclaration, std::optional<std::string> namespaceName);
+	VarAssignNode(Token varNameTok, std::shared_ptr<Node> node, bool isDeclaration, std::optional<std::string> namespaceName, std::optional<std::string> strictVarDatatype = std::nullopt);
 
 	std::string Repr() override;
 	Token GetVarNameToken() { return varNameTok; }
 	std::shared_ptr<Node> GetValueNode() { return node; }
+	std::optional<std::string> GetStrictVarDatatype() { return strictVarDatatype; }
 	bool GetIsDeclaration() { return isDeclaration; }
 	std::optional<std::string> GetNamespaceName() { return namespaceName; }
 
@@ -120,6 +125,7 @@ public:
 private:
 	Token varNameTok;
 	std::shared_ptr<Node> node;
+	std::optional<std::string> strictVarDatatype;
 	bool isDeclaration;
 	std::optional<std::string> namespaceName;
 };

@@ -531,6 +531,25 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     llvm::Value* value = CompileNode(node->GetValueNode());
     if (!value) return nullptr;
 
+    // enforce strict type annotation
+    if (node->GetIsDeclaration() && node->GetStrictVarDatatype().has_value())
+    {
+        const std::string& declaredTypeName = node->GetStrictVarDatatype().value();
+        llvm::Type* declaredTy = StringToLLVMType(declaredTypeName);
+
+        if (!declaredTy)
+        {
+            std::cerr << "VarAssign error: unknown type '" << declaredTypeName << "' for variable '" << name << "'\n";
+            return nullptr;
+        }
+
+        if (value->getType() != declaredTy)
+        {
+            std::cerr << "Type mismatch: variable '" << name << "' declared as '" << declaredTypeName << "' but initializer has a different type\n";
+            return nullptr;
+        }
+    }
+
     // if RHS is a call to an extern that returns a struct, record the mapping
     if (value->getType()->isStructTy())
     {

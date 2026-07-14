@@ -81,15 +81,22 @@ ParseResult Parser::Statements()
 		if (!moreStatements)
 			break;
 
-		statement = res.TryRegister(Statement());
-		if (!statement.has_value())
+		ParseResult statementResult = Statement();	
+		if (statementResult.HasError())
 		{
-			Reverse(res.GetToReverseCount());
-			moreStatements = false;
-			continue;
+			if (statementResult.GetAdvancementCount() == 0)
+			{
+				// no tokens consumed at all, block just ended here
+				moreStatements = false;
+				continue;
+			}
+			
+			// partially parsed before failing -> error
+			res.Register(statementResult);
+			return res;
 		}
 
-		statements.push_back(statement.value());
+		statements.push_back(res.Register(statementResult));
 	}
 
 	if (statements.size() == 1)
@@ -254,30 +261,64 @@ ParseResult Parser::Expr()
 	ParseResult res;
 
 	// Handle var declaration
-	if (currentToken.Matches(TT_KEYWORD, "var"))
+	if (currentToken.GetType() == TT_IDENTIFIER && Peek().GetType() == TT_COLON)
 	{
-		Advance();
-		res.RegisterAdvancement();
-
-		if (currentToken.GetType() != TT_IDENTIFIER)
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
-
 		Token varName = currentToken;
 
 		Advance();
 		res.RegisterAdvancement();
 
-		if (currentToken.GetType() != TT_EQ)
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
+		if (currentToken.GetType() != TT_COLON)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ':'"));
 
 		Advance();
 		res.RegisterAdvancement();
-		auto expr = res.Register(Expr());
 
-		if (res.HasError())
-			return res;
+		if (currentToken.Matches(TT_KEYWORD, "var"))
+		{
+			Advance();
+			res.RegisterAdvancement();
+
+			if (currentToken.GetType() != TT_EQ)
+				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
+
+			Advance();
+			res.RegisterAdvancement();
+			auto expr = res.Register(Expr());
+
+			if (res.HasError())
+				return res;
+			else
+				return res.Success(std::make_shared<VarAssignNode>(varName, expr, true, std::nullopt));
+		}
+
+		// check if var type is validly typed
+		std::string strictVarType = "";
+		if (std::holds_alternative<std::string>(currentToken.GetValue()))
+		{
+			strictVarType = std::get<std::string>(currentToken.GetValue());
+			if (strictVarType == "")
+				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Variable datatype can not be nothing"));
+		}
 		else
-			return res.Success(std::make_shared<VarAssignNode>(varName, expr, true, std::nullopt));
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Could not parse var type. Type was not a string"));
+
+		Advance();
+		res.RegisterAdvancement();
+		
+		if (currentToken.GetType() == TT_EQ)
+		{
+			Advance();
+			res.RegisterAdvancement();
+			auto expr = res.Register(Expr());
+
+			if (res.HasError())
+				return res;
+			else
+				return res.Success(std::make_shared<VarAssignNode>(varName, expr, true, std::nullopt, strictVarType));
+		}
+		else // no direct assignment
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Variables must be initialized"));
 	}
 
 	// Handle assignment
@@ -1171,7 +1212,7 @@ ParseResult& ParseResult::Success(std::shared_ptr<Node> node)
 
 ParseResult& ParseResult::Failure(std::unique_ptr<Error> error)
 {
-	if (error != nullptr || advancementCount == 0)
+	if (!this->error || advancementCount == 0)
 		this->error = std::move(error);
 	return *this;
 }

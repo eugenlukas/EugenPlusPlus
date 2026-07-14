@@ -69,10 +69,11 @@ std::string VarAccessNode::Repr()
 	return "(" + varNameTok.Repr() + ")";
 }
 
-VarAssignNode::VarAssignNode(Token varNameTok, std::shared_ptr<Node> node, bool isDeclaration, std::optional<std::string> namespaceName)
+VarAssignNode::VarAssignNode(Token varNameTok, std::shared_ptr<Node> node, bool isDeclaration, std::optional<std::string> namespaceName, std::optional<std::string> strictVarDatatype)
 {
 	this->varNameTok = varNameTok;
 	this->node = node;
+	this->strictVarDatatype = strictVarDatatype;
 	this->isDeclaration = isDeclaration;
 	this->namespaceName = namespaceName;
 
@@ -221,6 +222,16 @@ ListNode::ListNode(std::vector<std::shared_ptr<Node>> elementNodes, Position pos
 	this->elementNodes = elementNodes;
 	this->posStart = posStart;
 	this->posEnd = posEnd;
+}
+
+ListNode::ListNode(std::string listType, bool dynSize, int elementSize, std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd)
+{
+	this->elementNodes = elementNodes;
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+	this->dynamicSize = dynSize;
+	this->elementSize = elementSize;
+	this->listType = listType;
 }
 
 std::string ListNode::Repr()

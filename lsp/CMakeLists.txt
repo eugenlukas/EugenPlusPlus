@@ -1,3 +1,12 @@
+include(FetchContent)
+FetchContent_Declare(
+	json
+	GIT_REPOSITORY https://github.com/nlohmann/json.git
+	GIT_TAG v3.12.0
+	GIT_SHALLOW
+)
+FetchContent_MakeAvailable(json)
+
 file(GLOB_RECURSE LSP_SOURCES CONFIGURE_DEPENDS
     src/*.cpp
 )
@@ -12,4 +21,4 @@ target_include_directories(lsp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(lsp PRIVATE core)
+target_link_libraries(lsp PRIVATE core nlohmann_json::nlohmann_json)

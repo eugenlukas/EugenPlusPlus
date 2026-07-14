@@ -42,10 +42,14 @@ MakeTokensResult Lexer::MakeTokens()
 
 			auto result = makeDblConon();
 
+			// result is not null when a dbl conon was found
 			if (result.has_value())
 				tokens.push_back(result.value());
 			else
-				return MakeTokensResult({}, std::make_unique<IllegalCharError>(posStart, pos, "'" + std::string(1, current_char) + "'"));
+			{
+				tokens.push_back(Token(TT_COLON, std::nullopt, posStart, pos));
+				Advance();
+			}
 		}
 		else if (std::isdigit(current_char))
 			tokens.push_back(makeNumber());
