@@ -80,16 +80,12 @@ class ListNode : public Node
 public:
 	ListNode();
 	ListNode(std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd);
-	ListNode(std::string listType, bool dynSize, int elementSize, std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd);
 
 	std::string Repr() override;
 	std::vector<std::shared_ptr<Node>> GetElementNodes() { return elementNodes; }
 
 private:
 	std::vector<std::shared_ptr<Node>> elementNodes;
-	bool dynamicSize = false;
-	int elementSize = 0;
-	std::string listType = "";
 };
 
 class VarAccessNode : public Node
@@ -314,6 +310,36 @@ private:
 	std::string moduleAlias;
 	std::string functionName;
 	std::string signature;
+};
+
+class IndexGetNode : public Node
+{
+public:
+	IndexGetNode(std::shared_ptr<Node> listNode, std::shared_ptr<Node> indexNode, Position posStart, Position posEnd);
+
+	std::string Repr() override;
+	std::shared_ptr<Node> GetListNode() { return listNode; }
+	std::shared_ptr<Node> GetIndexNode() { return indexNode; }
+
+private:
+	std::shared_ptr<Node> listNode;
+	std::shared_ptr<Node> indexNode;
+};
+
+class IndexAssignNode : public Node
+{
+public:
+	IndexAssignNode(std::shared_ptr<Node> listNode, std::shared_ptr<Node> indexNode, std::shared_ptr<Node> valueNode, Position posStart, Position posEnd);
+
+	std::string Repr() override;
+	std::shared_ptr<Node> GetListNode() { return listNode; }
+	std::shared_ptr<Node> GetIndexNode() { return indexNode; }
+	std::shared_ptr<Node> GetValueNode() { return valueNode; }
+
+private:
+	std::shared_ptr<Node> listNode;
+	std::shared_ptr<Node> indexNode;
+	std::shared_ptr<Node> valueNode;
 };
 
 class StructDefNode : public Node

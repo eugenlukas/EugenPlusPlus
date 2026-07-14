@@ -92,6 +92,7 @@ public:
 	ParseResult Call();
 	ParseResult Atom();
 	ParseResult ListExpr();
+	ParseResult IndexAssignStatement();
 	ParseResult IfExpr();
 	ParseResult IfExprB();
 	ParseResult IfExprC(std::shared_ptr<IfCase>& outElseCase);

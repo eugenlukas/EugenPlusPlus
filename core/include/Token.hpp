@@ -83,6 +83,7 @@ public:
 	Position GetPosEnd() { return posEnd.value(); }
 
 	std::variant<int, double, std::string> GetValue() const;
+	bool HasValue() const { return value.has_value(); }
 
 private:
 	std::string type;

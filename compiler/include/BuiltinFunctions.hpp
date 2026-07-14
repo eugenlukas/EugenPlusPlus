@@ -33,7 +33,7 @@ public:
     {
         if (args.size() != 1)
         {
-            std::cerr << "print expects 1 argument";
+            std::cerr << "print expects 1 argument\n";
             return nullptr;
         }
 
@@ -96,7 +96,7 @@ public:
     {
         if (args.size() != 1)
         {
-            std::cerr << "print expects 1 argument";
+            std::cerr << "print expects 1 argument\n";
             return nullptr;
         }
 
@@ -175,4 +175,28 @@ public:
     }
 
     std::string GetName() const override { return "<built-in function 'free'>"; }
+};
+
+class BuiltinInputStr : public BuiltinFunction
+{
+public:
+    using BuiltinFunction::BuiltinFunction;
+    llvm::Value* Codegen(llvm::IRBuilder<>& builder, std::vector<llvm::Value*> args) override
+    {
+        return builder.CreateCall(func, {}, "inputStrTmp");
+    }
+
+    std::string GetName() const override { return "<built-in function 'input_str'>"; }
+};
+
+class BuiltinInputNum : public BuiltinFunction
+{
+public:
+    using BuiltinFunction::BuiltinFunction;
+    llvm::Value* Codegen(llvm::IRBuilder<>& builder, std::vector<llvm::Value*> args) override
+    {
+        return builder.CreateCall(func, {}, "inputNumTmp");
+    }
+
+    std::string GetName() const override { return "<built-in function 'input_num'>"; }
 };

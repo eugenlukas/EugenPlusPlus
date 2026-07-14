@@ -33,6 +33,21 @@ struct VarInfo
     bool isHeapAllocated;
 };
 
+struct ArrayTypeInfo
+{
+    llvm::Type* elementType = nullptr;
+    std::string elementTypeName;
+    bool isDynamic = false;
+    int fixedSize = 0;
+};
+
+struct ArrayInfo
+{
+    llvm::Type* elementType;
+    bool isDynamic;
+    int length;
+};
+
 // Bundles everything the compiler needs to know about struct definitions
 struct StructRegistry
 {
@@ -64,6 +79,9 @@ public:
         DeclareIntToStr();
         DeclareFree();
         DeclarePrintf();
+        DeclareInputStrFunc();
+        DeclareInputNumFunc();
+        DeclareMalloc();
         RegisterBuiltins();
         RegisterConstants();
     }
@@ -92,18 +110,25 @@ private:
     std::unordered_map<std::string, std::string>  m_linkedLibs;
     std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_externFunctions;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_externReturnTypeStrings;
+    std::unordered_map<std::string, ArrayInfo> m_arrays;
     StructRegistry m_structs;
 
     llvm::Function* concatFunc;
     llvm::Function* intToStrFunc;
     llvm::Function* freeFunc;
     llvm::Function* printfFunc;
+    llvm::Function* inputStrFunc;
+    llvm::Function* inputNumFunc;
+    llvm::Function* mallocFunc;
 
 private:
     llvm::Value* CompileNode(std::shared_ptr<Node> node);
     llvm::Value* Compile_NumberNode(NumberNode* node);
     llvm::Value* Compile_StringNode(StringNode* node);
     llvm::Value* Compile_ListNode(ListNode* node);
+    llvm::Value* Compile_ArrayDeclaration(VarAssignNode* node, const std::string& name, ArrayTypeInfo info);
+    llvm::Value* Compile_IndexGetNode(IndexGetNode* node);
+    llvm::Value* Compile_IndexAssignNode(IndexAssignNode* node);
     llvm::Value* Compile_BinOpNode(BinOpNode* node);
     llvm::Value* Compile_VarAccessNode(VarAccessNode* node);
     llvm::Value* Compile_VarAssignNode(VarAssignNode* node);
@@ -141,13 +166,18 @@ private:
     void DeclareIntToStr();
     void DeclareFree();
     void DeclarePrintf();
+    void DeclareInputStrFunc();
+    void DeclareInputNumFunc();
+    void DeclareMalloc();
     void RegisterBuiltins();
     void RegisterConstants();
 
     llvm::AllocaInst* CreateEntryBlockAlloca(const std::string& name, llvm::Type* type);
     llvm::Value* IntToString(llvm::Value* val);
     llvm::Type* StringToLLVMType(const std::string& typeName);
+    std::optional<ArrayTypeInfo> ParseArrayTypeName(const std::string &typeName);
     llvm::Value* CreateFormatString(const std::string& fmt);
+    llvm::Value* GetArrayElementPtr(llvm::AllocaInst* alloca, llvm::Type* elementType, int length, bool isDynamic, llvm::Value* indexVal, const std::string& name);
 
     std::string DetectLinker();
 };

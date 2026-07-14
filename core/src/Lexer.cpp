@@ -183,7 +183,7 @@ Token Lexer::makeNumber()
 	//std::cout << numStr << std::endl;
 	
 	if (dotCount == 0)
-		return Token(TT_INT, std::stod(numStr), posStart, pos);
+		return Token(TT_INT, std::stoi(numStr), posStart, pos);
 	else
 		return Token(TT_FLOAT, std::stod(numStr), posStart, pos);
 }

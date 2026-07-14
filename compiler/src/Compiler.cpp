@@ -148,6 +148,12 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
     if (auto n = dynamic_cast<ListNode*>(node.get()))
         return Compile_ListNode(n);
 
+    if (auto n = dynamic_cast<IndexGetNode*>(node.get()))
+        return Compile_IndexGetNode(n);
+
+    if (auto n = dynamic_cast<IndexAssignNode*>(node.get()))
+        return Compile_IndexAssignNode(n);
+
     if (auto n = dynamic_cast<VarAccessNode*>(node.get()))
         return Compile_VarAccessNode(n);
 
@@ -225,6 +231,225 @@ llvm::Value *Compiler::Compile_ListNode(ListNode *node)
         last = CompileNode(stmt);
 
     return last;
+}
+
+llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::string &name, ArrayTypeInfo info)
+{
+    auto* listNode = dynamic_cast<ListNode*>(node->GetValueNode().get());
+    if (!listNode)
+    {
+        std::cerr << "Array variable '" << name << "' must be initialized with a list literal\n";
+        return nullptr;
+    }
+
+    auto elementNodes = listNode->GetElementNodes();
+    int count = (int)elementNodes.size();
+
+    std::vector<llvm::Value*> compiledElems(count, nullptr);
+
+    // infer the element type from the first element when none was declared
+    if (!info.elementType)
+    {
+        if (count == 0)
+        {
+            std::cerr << "Cannot infer the type of an empty list literal for '" << name << "'; declare an explicit type, e.g. 'name : int[dyn] = []'\n";
+            return nullptr;
+        }
+
+        compiledElems[0] = CompileNode(elementNodes[0]);
+        if (!compiledElems[0])
+            return nullptr;
+
+        info.elementType = compiledElems[0]->getType();
+        info.fixedSize = count;
+    }
+
+    if (!info.isDynamic && count != info.fixedSize)
+    {
+        std::cerr << "Array '" << name << "' declared with size " << info.fixedSize
+                   << " but initializer has " << count << " element(s)\n";
+        return nullptr;
+    }
+
+    int length = info.isDynamic ? count : info.fixedSize;
+
+    VarInfo* existing = FindVariable(name);
+    auto existingArrIt = m_arrays.find(name);
+    bool existingIsArray = existing && existingArrIt != m_arrays.end();
+
+    if (!node->GetIsDeclaration() && !existing)
+    {
+        std::cerr << "Variable '" << name << "' used before declaration; declare it with 'name : "
+                   << (info.isDynamic ? (info.elementTypeName + "[dyn]") : (info.elementTypeName + "[" + std::to_string(length) + "]"))
+                   << " = [...]'\n";
+        return nullptr;
+    }
+
+    if (existing && !existingIsArray)
+    {
+        std::cerr << "Type mismatch: variable '" << name << "' is not an array\n";
+        return nullptr;
+    }
+
+    llvm::AllocaInst* alloca = nullptr;
+    bool isHeap = info.isDynamic;
+
+    if (existingIsArray)
+    {
+        const ArrayInfo& oldInfo = existingArrIt->second;
+
+        if (oldInfo.elementType != info.elementType || oldInfo.isDynamic != info.isDynamic)
+        {
+            std::cerr << "Type mismatch: array '" << name << "' cannot change element type or dyn/fixed-ness on reassignment\n";
+            return nullptr;
+        }
+
+        if (!info.isDynamic)
+        {
+            if (oldInfo.length != length)
+            {
+                std::cerr << "Array '" << name << "' is a fixed size of " << oldInfo.length
+                           << " and cannot be resized to " << length << " by reassignment\n";
+                return nullptr;
+            }
+
+            alloca = existing->alloca;
+        }
+        else
+        {
+            // dyn array: free the old heap buffer, malloc a fresh one, rebind the pointer
+            alloca = existing->alloca;
+
+            llvm::Value* oldBase = builder.CreateLoad(llvm::PointerType::get(info.elementType, 0), alloca, name);
+            llvm::Value* oldRaw = builder.CreateBitCast(oldBase, builder.getInt8Ty()->getPointerTo(), name + "OldRaw");
+            builder.CreateCall(freeFunc, { oldRaw });
+            m_heapValues.erase(oldBase);
+
+            const llvm::DataLayout& dl = module->getDataLayout();
+            uint64_t elemSize = dl.getTypeAllocSize(info.elementType);
+            llvm::Value* sizeVal = llvm::ConstantInt::get(builder.getInt64Ty(), elemSize * (uint64_t)std::max(length, 0));
+
+            llvm::Value* raw = builder.CreateCall(mallocFunc, { sizeVal }, name + "Raw");
+            llvm::Value* basePtr = builder.CreateBitCast(raw, llvm::PointerType::get(info.elementType, 0), name + "Ptr");
+
+            builder.CreateStore(basePtr, alloca);
+            m_heapValues.insert(basePtr);
+        }
+    }
+    else if (info.isDynamic)
+    {
+        // heap-allocate elementType[length] via malloc and store the base pointer in the alloca
+        const llvm::DataLayout& dl = module->getDataLayout();
+        uint64_t elemSize = dl.getTypeAllocSize(info.elementType);
+        llvm::Value* sizeVal = llvm::ConstantInt::get(builder.getInt64Ty(), elemSize * (uint64_t)std::max(length, 0));
+
+        llvm::Value* raw = builder.CreateCall(mallocFunc, { sizeVal }, name + "Raw");
+        llvm::Value* basePtr = builder.CreateBitCast(raw, llvm::PointerType::get(info.elementType, 0), name + "Ptr");
+
+        alloca = CreateEntryBlockAlloca(name, llvm::PointerType::get(info.elementType, 0));
+        builder.CreateStore(basePtr, alloca);
+
+        m_heapValues.insert(basePtr);
+    }
+    else
+    {
+        llvm::ArrayType* arrTy = llvm::ArrayType::get(info.elementType, (uint64_t)length);
+        alloca = CreateEntryBlockAlloca(name, arrTy);
+    }
+
+    for (int i = 0; i < count; i++)
+    {
+        llvm::Value* elemVal = compiledElems[i] ? compiledElems[i] : CompileNode(elementNodes[i]);
+        if (!elemVal)
+            return nullptr;
+
+        // widen/narrow integer literals to the declared element type
+        if (elemVal->getType() != info.elementType && elemVal->getType()->isIntegerTy() && info.elementType->isIntegerTy())
+            elemVal = builder.CreateIntCast(elemVal, info.elementType, true, "elemCast");
+
+        llvm::Value* elemPtr = GetArrayElementPtr(alloca, info.elementType, length, info.isDynamic, llvm::ConstantInt::get(builder.getInt32Ty(), i), name);
+        builder.CreateStore(elemVal, elemPtr);
+    }
+
+    if (!existingIsArray)
+        SetVariable(name, { alloca, isHeap });
+
+    m_arrays[name] = { info.elementType, info.isDynamic, length };
+
+    return alloca;
+}
+
+llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
+{
+    auto* va = dynamic_cast<VarAccessNode*>(node->GetListNode().get());
+    if (!va || va->GetIsNamespaced())
+    {
+        std::cerr << "Chained/nested indexing is not yet supported\n";
+        return nullptr;
+    }
+
+    std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
+
+    VarInfo* var = FindVariable(name);
+    auto arrIt = m_arrays.find(name);
+    if (!var || arrIt == m_arrays.end())
+    {
+        std::cerr << "Index access error: '" << name << "' is not a known array variable\n";
+        return nullptr;
+    }
+
+    llvm::Value* indexVal = CompileNode(node->GetIndexNode());
+    if (!indexVal)
+        return nullptr;
+
+    const ArrayInfo& info = arrIt->second;
+    llvm::Value* elemPtr = GetArrayElementPtr(var->alloca, info.elementType, info.length, info.isDynamic, indexVal, name);
+
+    return builder.CreateLoad(info.elementType, elemPtr, name + "Elem");
+}
+
+llvm::Value *Compiler::Compile_IndexAssignNode(IndexAssignNode *node)
+{
+    auto* va = dynamic_cast<VarAccessNode*>(node->GetListNode().get());
+    if (!va || va->GetIsNamespaced())
+    {
+        std::cerr << "Chained/nested index assignment is not yet supported\n";
+        return nullptr;
+    }
+
+    std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
+
+    VarInfo* var = FindVariable(name);
+    auto arrIt = m_arrays.find(name);
+    if (!var || arrIt == m_arrays.end())
+    {
+        std::cerr << "Index assignment error: '" << name << "' is not a known array variable\n";
+        return nullptr;
+    }
+
+    const ArrayInfo& info = arrIt->second;
+
+    llvm::Value* indexVal = CompileNode(node->GetIndexNode());
+    if (!indexVal)
+        return nullptr;
+
+    llvm::Value* value = CompileNode(node->GetValueNode());
+    if (!value)
+        return nullptr;
+
+    if (value->getType() != info.elementType && value->getType()->isIntegerTy() && info.elementType->isIntegerTy())
+        value = builder.CreateIntCast(value, info.elementType, true, "elemCast");
+
+    if (value->getType() != info.elementType)
+    {
+        std::cerr << "Type mismatch assigning into array '" << name << "'\n";
+        return nullptr;
+    }
+
+    llvm::Value* elemPtr = GetArrayElementPtr(var->alloca, info.elementType, info.length, info.isDynamic, indexVal, name);
+    builder.CreateStore(value, elemPtr);
+
+    return value;
 }
 
 llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
@@ -507,6 +732,31 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
         return rhs;
     }
 
+    // array/list declaration with explicit type
+    if (!node->GetIsNamespaced() && node->GetStrictVarDatatype().has_value())
+    {
+        auto arrayInfo = ParseArrayTypeName(node->GetStrictVarDatatype().value());
+        if (arrayInfo.has_value())
+            return Compile_ArrayDeclaration(node, name, arrayInfo.value());
+    }
+
+    // array/list declaration with an inferred type
+    if (!node->GetIsNamespaced() && !node->GetStrictVarDatatype().has_value() && dynamic_cast<ListNode*>(node->GetValueNode().get()))
+    {
+        if (!node->GetIsDeclaration() && !FindVariable(name))
+        {
+            std::cerr << "Variable '" << name << "' used before declaration; declare it with 'name : var = [...]'\n";
+            return nullptr;
+        }
+
+        ArrayTypeInfo inferredInfo;
+        inferredInfo.elementType = nullptr;
+        inferredInfo.isDynamic = false;
+        inferredInfo.fixedSize = 0;
+
+        return Compile_ArrayDeclaration(node, name, inferredInfo);
+    }
+
     // struct instantiation (e.g. var red = Color)
     if (auto* varNode = dynamic_cast<VarAccessNode*>(node->GetValueNode().get()))
     {
@@ -515,13 +765,36 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
             std::string typeName = std::get<std::string>(varNode->GetVarNameToken().GetValue());
             if (m_structs.HasType(typeName))
             {
+                VarInfo* existing = FindVariable(name);
+
+                if (!node->GetIsDeclaration() && !existing)
+                {
+                    std::cerr << "Variable '" << name << "' used before declaration; declare it with 'name : var = " << typeName << "'\n";
+                    return nullptr;
+                }
+            
                 llvm::StructType* structTy = m_structs.types.at(typeName);
-                llvm::AllocaInst* alloca = CreateEntryBlockAlloca(name, structTy);
-
+                llvm::AllocaInst* alloca;
+            
+                if (existing)
+                {
+                    if (existing->alloca->getAllocatedType() != structTy)
+                    {
+                        std::cerr << "Type mismatch: variable '" << name << "' is not a '" << typeName << "'\n";
+                        return nullptr;
+                    }
+                
+                    alloca = existing->alloca;
+                }
+                else
+                {
+                    alloca = CreateEntryBlockAlloca(name, structTy);
+                    SetVariable(name, { alloca, false });
+                }
+            
                 builder.CreateStore(llvm::ConstantAggregateZero::get(structTy), alloca);
-                SetVariable(name, { alloca, false });
                 m_structs.varToType[name] = typeName;
-
+            
                 return alloca;
             }
         }
@@ -570,14 +843,16 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     VarInfo* existing = FindVariable(name);
     if (!existing)
     {
-        // first time -> allocate
+        if (!node->GetIsDeclaration())
+        {
+            std::cerr << "Variable '" << name << "' used before declaration; use 'name : type = expr' to declare it\n";
+            return nullptr;
+        }
         alloca = CreateEntryBlockAlloca(name, type);
         SetVariable(name, { alloca, isHeap });
     }
     else
-    {
         alloca = existing->alloca;
-    }
 
     if (alloca->getAllocatedType() != type)
     {
@@ -1726,11 +2001,31 @@ void Compiler::DeclarePrintf()
     printfFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "printf", module.get());
 }
 
+void Compiler::DeclareInputStrFunc()
+{
+    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt8Ty()->getPointerTo(), {}, false);
+    inputStrFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_str", module.get());
+}
+
+void Compiler::DeclareInputNumFunc()
+{
+    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
+    inputNumFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_num", module.get());
+}
+
+void Compiler::DeclareMalloc()
+{
+    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt8Ty()->getPointerTo(), { builder.getInt64Ty() }, false);
+    mallocFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "malloc", module.get());
+}
+
 void Compiler::RegisterBuiltins()
 {
     m_builtins["free"] = std::make_unique<BuiltinFree>(freeFunc);
     m_builtins["print"] = std::make_unique<BuiltinPrint>(printfFunc);
     m_builtins["println"] = std::make_unique<BuiltinPrintln>(printfFunc);
+    m_builtins["input_str"] = std::make_unique<BuiltinInputStr>(inputStrFunc);
+    m_builtins["input_num"] = std::make_unique<BuiltinInputNum>(inputNumFunc);
 }
 
 void Compiler::RegisterConstants()
@@ -1816,10 +2111,52 @@ llvm::Type *Compiler::StringToLLVMType(const std::string &typeName)
     return builder.getInt32Ty();
 }
 
+std::optional<ArrayTypeInfo> Compiler::ParseArrayTypeName(const std::string &typeName)
+{
+    if (typeName.empty() || typeName.back() != ']')
+        return std::nullopt;
+
+    size_t bracketPos = typeName.find('[');
+    if (bracketPos == std::string::npos)
+        return std::nullopt;
+
+    std::string elemTypeName = typeName.substr(0, bracketPos);
+    std::string inside = typeName.substr(bracketPos + 1, typeName.size() - bracketPos - 2);
+
+    ArrayTypeInfo info;
+    info.elementTypeName = elemTypeName;
+    info.elementType = StringToLLVMType(elemTypeName);
+
+    if (inside == "dyn")
+    {
+        info.isDynamic = true;
+        info.fixedSize = 0;
+    }
+    else
+    {
+        info.isDynamic = false;
+        info.fixedSize = std::stoi(inside);
+    }
+
+    return info;
+}
+
 llvm::Value *Compiler::CreateFormatString(const std::string &fmt)
 {
     builder.CreateGlobalStringPtr(fmt, "fmt");
     return nullptr;
+}
+
+llvm::Value *Compiler::GetArrayElementPtr(llvm::AllocaInst *alloca, llvm::Type *elementType, int length, bool isDynamic, llvm::Value *indexVal, const std::string &name)
+{
+    if (isDynamic)
+    {
+        llvm::Value* base = builder.CreateLoad(llvm::PointerType::get(elementType, 0), alloca, name);
+        return builder.CreateGEP(elementType, base, indexVal, name + "ElemPtr");
+    }
+
+    llvm::Value* idx[] = { llvm::ConstantInt::get(builder.getInt32Ty(), 0), indexVal };
+    return builder.CreateGEP(llvm::ArrayType::get(elementType, (uint64_t)length), alloca, idx, name + "ElemPtr");
 }
 
 std::string Compiler::DetectLinker()

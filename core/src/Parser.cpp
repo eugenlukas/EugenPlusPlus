@@ -305,6 +305,33 @@ ParseResult Parser::Expr()
 
 		Advance();
 		res.RegisterAdvancement();
+
+		// check if datatype is a list
+		if (currentToken.GetType() == TT_LSQUARE)
+		{
+			Advance();
+			res.RegisterAdvancement();
+
+			bool dynamicSize = false;
+			int fixedSize = 0;
+			if (currentToken.Matches(TT_KEYWORD, "dyn"))
+				dynamicSize = true;
+			else if (currentToken.GetType() == TT_INT)
+				fixedSize = std::get<int>(currentToken.GetValue());
+			else
+				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "List size must be a <number> as integer or 'dyn'"));
+
+			Advance();
+			res.RegisterAdvancement();
+
+			if (currentToken.GetType() != TT_RSQUARE)
+				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']'"));
+
+			strictVarType += "[" + (dynamicSize ? std::string("dyn") : std::to_string(fixedSize)) + "]";
+
+			Advance();
+			res.RegisterAdvancement();
+		}
 		
 		if (currentToken.GetType() == TT_EQ)
 		{
@@ -319,6 +346,16 @@ ParseResult Parser::Expr()
 		}
 		else // no direct assignment
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Variables must be initialized"));
+	}
+
+	// Handle indexed assignment
+	if (currentToken.GetType() == TT_IDENTIFIER && Peek().GetType() == TT_LSQUARE)
+	{
+		std::optional<std::shared_ptr<Node>> indexAssign = res.TryRegister(IndexAssignStatement());
+		if (indexAssign.has_value())
+			return res.Success(indexAssign.value());
+		else
+			Reverse(res.GetToReverseCount());
 	}
 
 	// Handle assignment
@@ -434,6 +471,27 @@ ParseResult Parser::Call()
 	std::shared_ptr<Node> atom = res.Register(Atom());
 	if (res.HasError())
 		return res;
+
+	// postfix indexing: arr[i], and chained arr[i][j]
+	while (currentToken.GetType() == TT_LSQUARE)
+	{
+		Position indexPosStart = atom->GetPosStart();
+		
+		Advance();
+		res.RegisterAdvancement();
+
+		std::shared_ptr<Node> indexExpr = res.Register(Expr());
+		if (res.HasError())
+			return res;
+
+		if (currentToken.GetType() != TT_RSQUARE)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']'"));
+
+		Advance();
+		res.RegisterAdvancement();
+
+		atom = std::make_shared<IndexGetNode>(atom, indexExpr, indexPosStart, currentToken.GetPosEnd().Copy());
+	}
 
 	if (currentToken.GetType() == TT_LPAREN)
 	{
@@ -637,6 +695,49 @@ ParseResult Parser::ListExpr()
 	}
 
 	return res.Success(std::make_unique<ListNode>(elementNodes, posStart, currentToken.GetPosEnd().Copy()));
+}
+
+ParseResult Parser::IndexAssignStatement()
+{
+    ParseResult res;
+	Position posStart = currentToken.GetPosStart().Copy();
+
+	if (currentToken.GetType() != TT_IDENTIFIER)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
+
+	Token varName = currentToken;
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_LSQUARE)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '['"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	std::shared_ptr<Node> indexExpr = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	if (currentToken.GetType() != TT_RSQUARE)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_EQ)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '='"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	std::shared_ptr<Node> valueExpr = res.Register(Expr());
+	if (res.HasError())
+		return res;
+
+	std::shared_ptr<Node> listNode = std::make_shared<VarAccessNode>(varName, std::nullopt);
+	return res.Success(std::make_shared<IndexAssignNode>(listNode, indexExpr, valueExpr, posStart, currentToken.GetPosEnd().Copy()));
 }
 
 ParseResult Parser::IfExpr()

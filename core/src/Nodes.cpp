@@ -224,16 +224,6 @@ ListNode::ListNode(std::vector<std::shared_ptr<Node>> elementNodes, Position pos
 	this->posEnd = posEnd;
 }
 
-ListNode::ListNode(std::string listType, bool dynSize, int elementSize, std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd)
-{
-	this->elementNodes = elementNodes;
-	this->posStart = posStart;
-	this->posEnd = posEnd;
-	this->dynamicSize = dynSize;
-	this->elementSize = elementSize;
-	this->listType = listType;
-}
-
 std::string ListNode::Repr()
 {
 	std::string result = "[";
@@ -332,4 +322,31 @@ StructDefNode::StructDefNode(Token varNameTok, std::vector<StructAttributeToken>
 std::string StructDefNode::Repr()
 {
 	return "<STRUCT DEFINITION '" + std::get<std::string>(varNameTok.GetValue()) + "'>";
+}
+
+IndexGetNode::IndexGetNode(std::shared_ptr<Node> listNode, std::shared_ptr<Node> indexNode, Position posStart, Position posEnd)
+{
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+	this->listNode = listNode;
+	this->indexNode = indexNode;
+}
+
+std::string IndexGetNode::Repr()
+{
+    return "(" + listNode->Repr() + "[" + indexNode->Repr() + "])";
+}
+
+IndexAssignNode::IndexAssignNode(std::shared_ptr<Node> listNode, std::shared_ptr<Node> indexNode, std::shared_ptr<Node> valueNode, Position posStart, Position posEnd)
+{
+	this->posStart = posStart;
+	this->posEnd = posEnd;
+	this->listNode = listNode;
+	this->indexNode = indexNode;
+	this->valueNode = valueNode;
+}
+
+std::string IndexAssignNode::Repr()
+{
+    return "(" + listNode->Repr() + "[" + indexNode->Repr() + "] = " + valueNode->Repr() + ")";
 }
