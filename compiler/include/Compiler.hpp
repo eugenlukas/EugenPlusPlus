@@ -62,6 +62,26 @@ struct StructRegistry
     bool IsStructVar(const std::string& varName) const { return varToType.count(varName) > 0; }
 };
 
+// x86-64 struct-by-value ABI classification (System V and Microsoft x64)
+enum class AbiPassKind
+{
+    Direct,     // struct fits in register(s)
+    Indirect,   // struct goes through memory (byval on SysV, plain pointer-to-copy on Windows, or sret on return)
+};
+
+struct StructAbiInfo
+{
+    AbiPassKind kind = AbiPassKind::Indirect;
+    llvm::Type* coercedType = nullptr; // when kind == indirect
+    uint64_t size = 0;
+};
+
+struct ExternFunctionAbi
+{
+    std::vector<std::optional<StructAbiInfo>> paramAbi;
+    std::optional<StructAbiInfo> returnAbi;
+};
+
 struct LoopContext
 {
     llvm::BasicBlock* continueBB;
@@ -74,6 +94,8 @@ public:
     Compiler() : builder(context)
     {
         module = std::make_unique<llvm::Module>("main_module", context);
+
+        InitializeTargetInfo();
 
         DeclareConcat();
         DeclareIntToStr();
@@ -98,6 +120,7 @@ private:
     llvm::LLVMContext context;
     llvm::IRBuilder<> builder;
     std::unique_ptr<llvm::Module> module;
+    std::unique_ptr<llvm::TargetMachine> m_targetMachine;
 
     std::vector<std::unordered_map<std::string, VarInfo>> m_scopes;
     std::unordered_set<llvm::Value*> m_heapValues;
@@ -109,6 +132,7 @@ private:
     std::unordered_map<std::string, llvm::Constant*> m_constants;
     std::unordered_map<std::string, std::string>  m_linkedLibs;
     std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_externFunctions;
+    std::unordered_map<std::string, std::unordered_map<std::string, ExternFunctionAbi>> m_externAbi;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_externReturnTypeStrings;
     std::unordered_map<std::string, ArrayInfo> m_arrays;
     StructRegistry m_structs;
@@ -179,5 +203,9 @@ private:
     llvm::Value* CreateFormatString(const std::string& fmt);
     llvm::Value* GetArrayElementPtr(llvm::AllocaInst* alloca, llvm::Type* elementType, int length, bool isDynamic, llvm::Value* indexVal, const std::string& name);
 
+    void InitializeTargetInfo();
+    StructAbiInfo ClassifyStructAbi(llvm::StructType* _struct);
+    llvm::Value* CoerceStructForCall(llvm::Value* structPtr, const StructAbiInfo& abi);
+    llvm::Value* DecoerceStructReturn(llvm::Value* coercedVal, llvm::StructType* structTy);
     std::string DetectLinker();
 };

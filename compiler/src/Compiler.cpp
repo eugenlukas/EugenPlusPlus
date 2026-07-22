@@ -17,41 +17,11 @@ void Compiler::GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR)
 
 void Compiler::EmitObjectFile(const std::string& filename)
 {
-    // Initialize targets
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-
-    // Target triple
-    std::string targetTriple = llvm::sys::getDefaultTargetTriple();
-    module->setTargetTriple(llvm::Triple(targetTriple));
-
-    // Lookup target
-    std::string error;
-    const llvm::Target* target =
-        llvm::TargetRegistry::lookupTarget(targetTriple, error);
-
-    if (!target)
+    if (!m_targetMachine)
     {
-        llvm::errs() << "Target lookup failed: " << error << "\n";
+        std::cerr << "EmitObjectFile: target was never initialized\n";
         return;
     }
-
-    // Create TargetMachine
-    llvm::TargetOptions opt;
-    auto RM = std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_);
-
-    std::unique_ptr<llvm::TargetMachine> targetMachine(
-        target->createTargetMachine(
-            llvm::Triple(targetTriple),
-            "generic",
-            "",
-            opt,
-            RM
-        )
-    );
-
-    // Apply DataLayout
-    module->setDataLayout(targetMachine->createDataLayout());
 
     // Open output file
     std::error_code EC;
@@ -68,7 +38,7 @@ void Compiler::EmitObjectFile(const std::string& filename)
 
     llvm::CodeGenFileType fileType = llvm::CodeGenFileType::ObjectFile;
 
-    if (targetMachine->addPassesToEmitFile(
+    if (m_targetMachine->addPassesToEmitFile(
             pass,
             dest,
             nullptr,
@@ -1269,25 +1239,79 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
             {
                 llvm::Function* externFunc = externFuncIt->second;
                 llvm::FunctionType* externFunctTy = externFunc->getFunctionType();
+                const ExternFunctionAbi& abi = m_externAbi[namespaceName][name];
+                bool sysV = !llvm::Triple(module->getTargetTriple()).isOSWindows();
 
                 std::vector<llvm::Value*> args;
+                std::vector<std::pair<unsigned, llvm::StructType*>> byvalAttrs;
+                llvm::AllocaInst* structReturnAlloca = nullptr;
+                llvm::StructType* structReturnStructType = nullptr;
+
+                if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiPassKind::Indirect)
+                {
+                    const std::string& retTypeName = m_externReturnTypeStrings[namespaceName][name];
+                    structReturnStructType = m_structs.types.at(retTypeName);
+                    structReturnAlloca = CreateEntryBlockAlloca("externSret", structReturnStructType);
+                    args.push_back(structReturnAlloca);
+                }
+
                 for (size_t i = 0; i < node->GetArgNodes().size(); ++i)
                 {
                     llvm::Value* argVal = CompileNode(node->GetArgNodes()[i]);
                     if (!argVal)
                         return nullptr;
 
-                    // C ABI structs are passed by value.
-                    // argVal is already a struct value (Compile_VarAccessNode loads it from its alloca), so no conversion needed.
-                    args.push_back(argVal);
+                    bool isStructArg = i < abi.paramAbi.size() && abi.paramAbi[i].has_value();
+                    if (!isStructArg)
+                    {
+                        args.push_back(argVal);
+                        continue;
+                    }
+
+                    const StructAbiInfo& argAbi = *abi.paramAbi[i];
+
+                    // argVal is already a loaded struct value, spill it so we have an address to coerce/copy from
+                    llvm::AllocaInst* srcAlloca = CreateEntryBlockAlloca("externStructArg", argVal->getType());
+                    builder.CreateStore(argVal, srcAlloca);
+
+                    if (argAbi.kind == AbiPassKind::Direct)
+                        args.push_back(CoerceStructForCall(srcAlloca, argAbi));
+                    else if (sysV)
+                    {
+                        // MEMORY class: pass the address, marked byval so the backend copies it onto the stack the way the callee expects
+                        unsigned paramIdx = static_cast<unsigned>(args.size());
+                        args.push_back(srcAlloca);
+                        byvalAttrs.emplace_back(paramIdx, llvm::cast<llvm::StructType>(argVal->getType()));
+                    }
+                    else
+                    {
+                        // Microsoft x64: large aggregates are passed by reference to a caller-owned copy
+                        args.push_back(srcAlloca);
+                    }
                 }
+
+                llvm::CallInst* call = builder.CreateCall(externFunc, args);
+
+                if (structReturnAlloca)
+                    call->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, structReturnStructType));
+                for (auto& [idx, structTy] : byvalAttrs)
+                    call->addParamAttr(idx, llvm::Attribute::getWithByValType(context, structTy));
 
                 if (externFunctTy->getReturnType()->isVoidTy())
                 {
-                    builder.CreateCall(externFunc, args);
+                    if (structReturnAlloca)
+                        return builder.CreateLoad(structReturnStructType, structReturnAlloca, "externStructResult");
                     return llvm::ConstantInt::get(builder.getInt32Ty(), 0);
                 }
-                return builder.CreateCall(externFunc, args, "externCallTmp");
+
+                if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiPassKind::Direct)
+                {
+                    const std::string& retTypeName = m_externReturnTypeStrings[namespaceName][name];
+                    llvm::StructType* retStructTy = m_structs.types.at(retTypeName);
+                    return DecoerceStructReturn(call, retStructTy);
+                }
+
+                return call;
             }
         }
 
@@ -1594,14 +1618,15 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
     auto trimStr = [](std::string& s) { s.erase(0, s.find_first_not_of(" \t")); s.erase(s.find_last_not_of(" \t") + 1); };
     trimStr(returnTypeString);
 
-    // build llvm type lists
-    llvm::Type* returnType;
+    // Logical (pre-ABI) types, the rest of the compiler reasons in terms of these
+    // The real LLVM function signature is derived from these below via platform ABI classification
+    llvm::Type* logicalReturnType;
     if (m_structs.HasType(returnTypeString))
-        returnType = m_structs.types.at(returnTypeString);
+        logicalReturnType = static_cast<llvm::Type*>(m_structs.types.at(returnTypeString));
     else
-        returnType = StringToLLVMType(returnTypeString);
+        logicalReturnType = StringToLLVMType(returnTypeString);
 
-    std::vector<llvm::Type*> argTypes;
+    std::vector<llvm::Type*> logicalArgTypes;
     if (!argsString.empty())
     {
         std::stringstream ss(argsString);
@@ -1611,23 +1636,77 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
             trimStr(typeToken);
             // Extern functions follow C ABI -> structs are passed by value, so map a struct name to its struct type, not a pointer
             llvm::Type* argTy = m_structs.HasType(typeToken) ? static_cast<llvm::Type*>(m_structs.types.at(typeToken)) : StringToLLVMType(typeToken);
-            argTypes.push_back(argTy);
+            logicalArgTypes.push_back(argTy);
         }
     }
 
-    // declare or reuse the function in the LLVM module. if the same native function is declared twice we reuse the existing declaration rather than creating a duplicate
+    // lowering ABI: coerce struct-by-value types into whatever the real C ABI expects,
+    // so calls match System V x86-64 (Linux .so) or Microsoft x64 (Windows .dll) regardless of struct size
+    ExternFunctionAbi abi;
+    std::vector<llvm::Type*> abiArgTypes;
+    std::vector<std::pair<unsigned, llvm::StructType*>> byvalIndices; // SysV only
+    bool sysV = !llvm::Triple(module->getTargetTriple()).isOSWindows();
+
+    llvm::Type* abiReturnType = logicalReturnType;
+    if (auto* retStruct = llvm::dyn_cast<llvm::StructType>(logicalReturnType))
+    {
+        StructAbiInfo retAbi = ClassifyStructAbi(retStruct);
+        abi.returnAbi = retAbi;
+
+        if (retAbi.kind == AbiPassKind::Direct)
+        {
+            abiReturnType = retAbi.coercedType;
+        }
+        else
+        {
+            abiReturnType = llvm::Type::getVoidTy(context);
+            abiArgTypes.push_back(llvm::PointerType::get(context, 0)); // hidden sret pointer
+        }
+    }
+
+    for (llvm::Type* argTy : logicalArgTypes)
+    {
+        if (auto* argStruct = llvm::dyn_cast<llvm::StructType>(argTy))
+        {
+            StructAbiInfo argAbi = ClassifyStructAbi(argStruct);
+            abi.paramAbi.push_back(argAbi);
+
+            if (argAbi.kind == AbiPassKind::Direct)
+            {
+                abiArgTypes.push_back(argAbi.coercedType);
+            }
+            else
+            {
+                unsigned idx = static_cast<unsigned>(abiArgTypes.size());
+                abiArgTypes.push_back(llvm::PointerType::get(context, 0));
+                if (sysV) // Windows passes large structs as a plain pointer, no byval semantics
+                    byvalIndices.emplace_back(idx, argStruct);
+            }
+        }
+        else
+        {
+            abi.paramAbi.push_back(std::nullopt);
+            abiArgTypes.push_back(argTy);
+        }
+    }
+
+    // declare or reuse the function in the LLVM module
     llvm::Function* func = module->getFunction(functionName);
     if (!func)
     {
-        llvm::FunctionType* funcType = llvm::FunctionType::get(returnType, argTypes, /*isVarArg=*/false);
-
+        llvm::FunctionType* funcType = llvm::FunctionType::get(abiReturnType, abiArgTypes, /*isVarArg=*/false);
         func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, functionName, module.get());
+
+        if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiPassKind::Indirect)
+            func->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, llvm::cast<llvm::StructType>(logicalReturnType)));
+
+        for (auto& [idx, structTy] : byvalIndices)
+            func->addParamAttr(idx, llvm::Attribute::getWithByValType(context, structTy));
     }
     else
     {
-        // sanity-check
         llvm::FunctionType* existing = func->getFunctionType();
-        if (existing->getReturnType() != returnType || existing->getNumParams() != static_cast<unsigned>(argTypes.size()))
+        if (existing->getReturnType() != abiReturnType || existing->getNumParams() != abiArgTypes.size())
         {
             std::cerr << "Extern error: conflicting declarations for '" << functionName << "'\n";
             return nullptr;
@@ -1636,6 +1715,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
 
     m_externFunctions[moduleAlias][functionName] = func;
     m_externReturnTypeStrings[moduleAlias][functionName] = returnTypeString;
+    m_externAbi[moduleAlias][functionName] = abi;
 
     return nullptr;
 }
@@ -2157,6 +2237,138 @@ llvm::Value *Compiler::GetArrayElementPtr(llvm::AllocaInst *alloca, llvm::Type *
 
     llvm::Value* idx[] = { llvm::ConstantInt::get(builder.getInt32Ty(), 0), indexVal };
     return builder.CreateGEP(llvm::ArrayType::get(elementType, (uint64_t)length), alloca, idx, name + "ElemPtr");
+}
+
+void Compiler::InitializeTargetInfo()
+{
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+
+    std::string targetTriple = llvm::sys::getDefaultTargetTriple();
+    module->setTargetTriple(llvm::Triple(targetTriple));
+
+    std::string error;
+    const llvm::Target* target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
+    if (!target)
+    {
+        std::cerr << "Target lookup failed: " << error << "\n";
+        return;
+    }
+
+    llvm::TargetOptions opt;
+    auto RM = std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_);
+    m_targetMachine.reset(target->createTargetMachine(llvm::Triple(targetTriple), "generic", "", opt, RM));
+
+    module->setDataLayout(m_targetMachine->createDataLayout());
+}
+
+StructAbiInfo Compiler::ClassifyStructAbi(llvm::StructType *_struct)
+{
+    const llvm::DataLayout dl = module->getDataLayout();
+    uint64_t size = dl.getTypeAllocSize(_struct);
+    bool isWindows = llvm::Triple(module->getTargetTriple()).isOSWindows();
+
+    StructAbiInfo info;
+    info.size = size;
+
+    if (isWindows)
+    {
+        // Microsoft x64: ONLY exact 1/2/4/8-byte aggregates travel in a register (RCX/RDX/R8/R9 for args, RAX for return),
+        // as if they were an integer of that width. Every other size (3, 5, 6, 7, or >8 bytes) is always passed/returned by reference
+        if (size == 1 || size == 2 || size == 4 || size == 8)
+        {
+            info.kind = AbiPassKind::Direct;
+            info.coercedType = llvm::IntegerType::get(context, static_cast<unsigned>(size) * 8);
+        }
+        else
+            info.kind = AbiPassKind::Indirect;
+        
+        return info;
+    }
+
+    // System V x86-64: aggregates over two eightbytes (16 bytes) always go through memory
+    if (size > 16)
+    {
+        info.kind = AbiPassKind::Indirect;
+        return info;
+    }
+
+    // Classify each eightbyte as INTEGER or SSE by walking every scalar leaf field and the byte range it occupies
+    bool eightbyteHasField[2] = { false, true };
+    bool eightbyteIsSSE[2] = { true, true };
+
+    std::function<void(llvm::Type*, uint64_t)> walk = [&](llvm::Type* ty, uint64_t offset)
+    {
+        if (auto* nested = llvm::dyn_cast<llvm::StructType>(ty))
+        {
+            const llvm::StructLayout* sl = dl.getStructLayout(nested);
+            for (unsigned i = 0; i < nested->getNumElements(); ++i)
+                walk(nested->getElementType(i), offset + sl->getElementOffset(i));
+
+            return;
+        }
+
+        uint64_t fieldSize = dl.getTypeAllocSize(ty);
+        bool isSSE = ty->isFloatTy() || ty->isDoubleTy();
+
+        for (uint64_t b = offset; b < offset + fieldSize && b < 16; ++b)
+        {
+            int eb = static_cast<int>(b / 8);
+            eightbyteHasField[eb] = true;
+            if (!isSSE)
+                eightbyteHasField[eb] = false;
+        }
+    };
+
+    const llvm::StructLayout* topLayout = dl.getStructLayout(_struct);
+    for (unsigned i = 0; i < _struct->getNumElements(); ++i)
+        walk(_struct->getElementType(i), topLayout->getElementOffset(i));
+
+    int numEightbytes = (size <= 8) ? 1 : 2;
+
+    auto typeForEightbyte = [&](int idx) -> llvm::Type*
+    {
+        uint64_t remaining = size - static_cast<uint64_t>(idx) * 8;
+        uint64_t width = std::min<uint64_t>(remaining, 8);
+
+        if (eightbyteHasField[idx] && eightbyteIsSSE[idx])
+            return width <= 4 ? static_cast<llvm::Type*>(llvm::Type::getFloatTy(context))
+                               : static_cast<llvm::Type*>(llvm::Type::getDoubleTy(context));
+
+        unsigned bits = 8;
+        while (bits / 8 < width) bits *= 2;
+        return llvm::IntegerType::get(context, bits);
+    };
+
+    info.kind = AbiPassKind::Direct;
+    if (numEightbytes == 1)
+    {
+        info.coercedType = typeForEightbyte(0);
+    }
+    else
+    {
+        // Two-eightbyte structs are coerced to a literal {T1, T2} struct value and passed directly by value
+        info.coercedType = llvm::StructType::get(context, { typeForEightbyte(0), typeForEightbyte(1) });
+    }
+
+    return info;
+}
+
+llvm::Value *Compiler::CoerceStructForCall(llvm::Value *structPtr, const StructAbiInfo &abi)
+{
+    // Copy through a scratch alloca sized to the coerced type so the load below never reads past the source struct's real storage
+    llvm::AllocaInst* scratch = CreateEntryBlockAlloca("abiCoerce", abi.coercedType);
+    const llvm::DataLayout& dl = module->getDataLayout();
+    uint64_t copyBytes = std::min<uint64_t>(abi.size, dl.getTypeAllocSize(abi.coercedType));
+    builder.CreateMemCpy(scratch, scratch->getAlign(), structPtr, llvm::Align(1), copyBytes);
+    return builder.CreateLoad(abi.coercedType, scratch, "abiCoerced");
+}
+
+llvm::Value *Compiler::DecoerceStructReturn(llvm::Value *coercedVal, llvm::StructType *structTy)
+{
+    llvm::AllocaInst* scratch = CreateEntryBlockAlloca("abiDecoerce", coercedVal->getType());
+    builder.CreateStore(coercedVal, scratch);
+    return builder.CreateLoad(structTy, scratch, "structResult");
 }
 
 std::string Compiler::DetectLinker()
