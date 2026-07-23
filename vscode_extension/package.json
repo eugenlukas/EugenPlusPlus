@@ -1,0 +1,34 @@
+{
+	"name": "eugenpp-lsp",
+	"description": "The Eugen++ LSP",
+	"version": "0.0.1",
+	"publisher": "vscode",
+	"engines": {
+		"vscode": "^1.100.0"
+	},
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"onLanguage:eugenpp"
+	],
+	"contributes": {
+		"languages": [{
+			"id": "eugenpp",
+			"aliases": ["Eugen++", "eugenpp"],
+			"extensions": [".epp"]
+		}]
+	},
+	"scripts": {
+		"vscode:prepublish": "tsc -p ./",
+		"compile": "tsc -watch -p ./",
+		"package": "vsce package"
+	},
+	"dependencies": {
+		"glob": "^11.0.0",
+		"vscode-languageclient": "^9.0.1"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.100.0",
+		"@types/node": "^22",
+		"typescript": "^5.9.2"
+	}
+}

@@ -1,34 +1,38 @@
+#define RUN_TESTS true
+
 #include <iostream>
 #include <cassert>
 #include "Binder.hpp"
 #include "rpc/rpc.hpp"
-//#include <optional>
-//#include <Token.hpp>
-//#include <vector>
+#include "Scanner.hpp"
+#if RUN_TESTS
+#include "Testing.hpp"
+#endif
 
-//std::optional<Token> TokenAt(const std::vector<Token>& tokens, int line, int col) {
-//    for (auto& t : tokens) {
-//        if (t.GetType() != TT_IDENTIFIER) continue;
-//        if (PositionContains(t.GetPosStart(), t.GetPosEnd(), line, col))
-//            return t;
-//    }
-//    return std::nullopt;
-//}
-
-struct EncodingExample
+void HandleMessage(std::string msg)
 {
-    bool Testing;
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(EncodingExample, Testing)
-};
-
+    LOG(msg);
+}
 
 int main()
 {
-    std::string expected = "Content-Length: 16\r\n\r\n{\"Testing\":true}";
-    std::string actual = EncodeMessage(EncodingExample{true});
-    if (expected != actual)
-        std::cerr << "Expected: " + expected + ", Actual: " + actual + "\n";
+#if RUN_TESTS
+    TestDecode();
+    TestEncode();
+#endif
+
+    LOG("LSP Started!");
+
+    std::ios_base::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+
+    Scanner scanner;
+
+    while (scanner.Scan())
+    {
+        std::string msg = scanner.Text();
+        HandleMessage(msg);
+    }
 
     return 0;
 }
