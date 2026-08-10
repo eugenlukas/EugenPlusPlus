@@ -47,9 +47,19 @@ cmake ..
 make
 ~~~
 
-<h3>Dpendencies to build</h3>
+<h3>Dpendencies for building the compiler/lsp/core</h3>
 <ul>
 <li>cmake</li>
-<li>g++</li>
+<li>g++/clang++</li>
 <li>llvm</li>
 </ul>
+
+<h3>Dpendencies for building the vscode-extension</h3>
+<ul>
+<li>npm</li>
+<li>vsce for packaging</li>
+</ul>
+
+<h2>AI Notice</h2>
+The compiler was made with the help of ChatGPT and later Claude, simply because I didn't knew how LLVM works.
+The rest was made by humans XD.

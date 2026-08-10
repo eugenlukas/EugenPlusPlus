@@ -169,21 +169,22 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
     if (node.get() != nullptr)
         std::cerr << "Unknown node type '" << typeid(*node.get()).name() << "'\n";
     else
-        std::cerr << "Node type to compile was null\n";
+        std::cout << "Warning: Node type to compile was null\n";
     return nullptr;
 }
 
 llvm::Value *Compiler::Compile_NumberNode(NumberNode* node)
 {
     auto val = node->GetToken().GetValue();
-    double num = 0;
 
     if (std::holds_alternative<int>(val))
-        num = static_cast<double>(std::get<int>(val));
-    else if (std::holds_alternative<double>(val))
-        num = std::get<double>(val);
+        return llvm::ConstantInt::get(builder.getInt32Ty(), std::get<int>(val), true);
 
-    return llvm::ConstantInt::get(builder.getInt32Ty(), num);
+    if (std::holds_alternative<double>(val))
+        return llvm::ConstantFP::get(builder.getDoubleTy(), std::get<double>(val));
+
+    std::cerr << "Compile_NumberNode: token holds neither int nor double\n";
+    return llvm::ConstantInt::get(builder.getInt32Ty(), 0);
 }
 
 llvm::Value *Compiler::Compile_StringNode(StringNode *node)
@@ -440,41 +441,73 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
     std::string op = node->GetOpToken().GetType();
 
     // Handle two numbers
-    if ((leftTy->isDoubleTy() && rightTy->isDoubleTy()) || (leftTy->isIntegerTy() && rightTy->isIntegerTy()))
+    bool bothInt = leftTy->isIntegerTy() && rightTy->isIntegerTy();
+    bool bothFP = (leftTy->isFloatTy() || leftTy->isDoubleTy()) && (rightTy->isFloatTy() || rightTy->isDoubleTy());
+
+    if (bothInt || bothFP)
     {
-        if (op == TT_PLUS)
-            return builder.CreateAdd(left, right, "addTmp");
-        if (op == TT_MINUS)
-            return builder.CreateSub(left, right, "subTmp");
-        if (op == TT_MUL)
-            return builder.CreateMul(left, right, "mulTmp");
-        if (op == TT_DIV)
-            return builder.CreateSDiv(left, right, "divTmp"); // Signed
-        if (op == TT_MOD)
-            return builder.CreateSRem(left, right, "sremTmp"); // Signed
+        if (bothFP && leftTy != rightTy) // float + double -> promote the narrower one
+        {
+            if (leftTy->isFloatTy())
+                left = builder.CreateFPExt(left, rightTy, "fpPromote");
+            else
+                right = builder.CreateFPExt(right, leftTy, "fpPromote");
+        }
+
+        if (op == TT_PLUS)  return bothFP ? builder.CreateFAdd(left, right, "addTmp") : builder.CreateAdd(left, right, "addTmp");
+        if (op == TT_MINUS) return bothFP ? builder.CreateFSub(left, right, "subTmp") : builder.CreateSub(left, right, "subTmp");
+        if (op == TT_MUL)   return bothFP ? builder.CreateFMul(left, right, "mulTmp") : builder.CreateMul(left, right, "mulTmp");
+        if (op == TT_DIV)   return bothFP ? builder.CreateFDiv(left, right, "divTmp") : builder.CreateSDiv(left, right, "divTmp");
+        if (op == TT_MOD)   return bothFP ? builder.CreateFRem(left, right, "sremTmp") : builder.CreateSRem(left, right, "sremTmp");
         if (op == TT_POW)
         {
-            llvm::Function* powFunc = llvm::Intrinsic::getOrInsertDeclaration(module.get(), llvm::Intrinsic::pow, {left->getType()});
-            return builder.CreateCall(powFunc, {left, right}, "powTmp");
+            llvm::Type* fpTy = bothFP ? left->getType() : builder.getDoubleTy();
+            llvm::Value* base = bothFP ? left  : builder.CreateSIToFP(left, fpTy);
+            llvm::Value* exp  = bothFP ? right : builder.CreateSIToFP(right, fpTy);
+            llvm::Function* powFunc = llvm::Intrinsic::getOrInsertDeclaration(module.get(), llvm::Intrinsic::pow, {fpTy});
+            return builder.CreateCall(powFunc, {base, exp}, "powTmp");
         }
-        if (op == TT_EQEQ)
-            return builder.CreateICmpEQ(left, right, "eqTmp");
-        if (op == TT_NEQ)
-            return builder.CreateICmpNE(left, right, "neTmp");
-        if (op == TT_LT)
-            return builder.CreateICmpSLT(left, right, "ltTmp"); // Signed
-        if (op == TT_GT)
-            return builder.CreateICmpSGT(left, right, "gtTmp"); // Signed
-        if (op == TT_LTEQ)
-            return builder.CreateICmpSLE(left, right, "lteTmp"); // Signed
-        if (op == TT_GTEQ)
-            return builder.CreateICmpSGE(left, right, "gteTmp"); // Signed
-        if (node->GetOpToken().Matches(TT_KEYWORD, "AND"))
-            return builder.CreateAnd(left, right, "andTmp");
-        if (node->GetOpToken().Matches(TT_KEYWORD, "OR"))
-            return builder.CreateOr(left, right, "orTmp");
+        if (op == TT_EQEQ)  return bothFP ? builder.CreateFCmpOEQ(left, right, "eqTmp")  : builder.CreateICmpEQ(left, right, "eqTmp");
+        if (op == TT_NEQ)   return bothFP ? builder.CreateFCmpONE(left, right, "neTmp")  : builder.CreateICmpNE(left, right, "neTmp");
+        if (op == TT_LT)    return bothFP ? builder.CreateFCmpOLT(left, right, "ltTmp")  : builder.CreateICmpSLT(left, right, "ltTmp");
+        if (op == TT_GT)    return bothFP ? builder.CreateFCmpOGT(left, right, "gtTmp")  : builder.CreateICmpSGT(left, right, "gtTmp");
+        if (op == TT_LTEQ)  return bothFP ? builder.CreateFCmpOLE(left, right, "lteTmp") : builder.CreateICmpSLE(left, right, "lteTmp");
+        if (op == TT_GTEQ)  return bothFP ? builder.CreateFCmpOGE(left, right, "gteTmp") : builder.CreateICmpSGE(left, right, "gteTmp");
+        if (node->GetOpToken().Matches(TT_KEYWORD, "and") || node->GetOpToken().Matches(TT_KEYWORD, "or"))
+        {
+            // Normalize both operands to a clean i1 truth value before combiningwer.
+            llvm::Value* lBool = builder.CreateICmpNE(left, llvm::ConstantInt::get(left->getType(), 0), "lBool");
+            llvm::Value* rBool = builder.CreateICmpNE(right, llvm::ConstantInt::get(right->getType(), 0), "rBool");
+            llvm::Value* result = node->GetOpToken().Matches(TT_KEYWORD, "and") ? builder.CreateAnd(lBool, rBool, "andTmp")
+            : builder.CreateOr(lBool, rBool, "orTmp");
+        
+            return builder.CreateZExt(result, builder.getInt32Ty(), "boolTmp");
+        }
 
-        std::cerr << "Unsupported binary operation '" << op << "' for two numbers\n";
+        std::cerr << "Unsupported binary operation '" << node->GetOpToken().Repr() << "' for two numbers\n";
+        return nullptr;
+    }
+
+    // mixed int/float, widen the int operand
+    if ((leftTy->isIntegerTy() && (rightTy->isFloatTy() || rightTy->isDoubleTy())) || (rightTy->isIntegerTy() && (leftTy->isFloatTy() || leftTy->isDoubleTy())))
+    {
+        llvm::Type* fpTy = leftTy->isIntegerTy() ? rightTy : leftTy;
+        if (leftTy->isIntegerTy())  left  = builder.CreateSIToFP(left, fpTy, "intToFp");
+        if (rightTy->isIntegerTy()) right = builder.CreateSIToFP(right, fpTy, "intToFp");
+
+        if (op == TT_PLUS)  return builder.CreateFAdd(left, right, "addTmp");
+        if (op == TT_MINUS) return builder.CreateFSub(left, right, "subTmp");
+        if (op == TT_MUL)   return builder.CreateFMul(left, right, "mulTmp");
+        if (op == TT_DIV)   return builder.CreateFDiv(left, right, "divTmp");
+        if (op == TT_MOD)   return builder.CreateFRem(left, right, "sremTmp");
+        if (op == TT_EQEQ)  return builder.CreateFCmpOEQ(left, right, "eqTmp");
+        if (op == TT_NEQ)   return builder.CreateFCmpONE(left, right, "neTmp");
+        if (op == TT_LT)    return builder.CreateFCmpOLT(left, right, "ltTmp");
+        if (op == TT_GT)    return builder.CreateFCmpOGT(left, right, "gtTmp");
+        if (op == TT_LTEQ)  return builder.CreateFCmpOLE(left, right, "lteTmp");
+        if (op == TT_GTEQ)  return builder.CreateFCmpOGE(left, right, "gteTmp");
+
+        std::cerr << "Unsupported binary operation '" << op << "' for mixed int/float\n";
         return nullptr;
     }
 
@@ -638,7 +671,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     // struct field assignment (e.g. red::r = 255)
     if (node->GetIsNamespaced())
     {
-        const std::string& ownerName = node->GetNamespaceName().value();
+        const std::string ownerName = node->GetNamespaceName().value();
 
         if (!m_structs.IsStructVar(ownerName))
         {
@@ -695,8 +728,17 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
 
         // widen an i32 RHS into whatever the field actually stores
         llvm::Type* fieldTy = structTy->getElementType((unsigned)fieldIdx);
-        if (rhs->getType() != fieldTy && rhs->getType()->isIntegerTy() && fieldTy->isIntegerTy())
-            rhs = builder.CreateTruncOrBitCast(rhs, fieldTy, "fieldCast");
+        if (rhs->getType() != fieldTy)
+        {
+            if (rhs->getType()->isIntegerTy() && fieldTy->isIntegerTy())
+                rhs = builder.CreateTruncOrBitCast(rhs, fieldTy, "fieldCast");
+            else if (fieldTy->isFloatingPointTy() && rhs->getType()->isIntegerTy())
+                rhs = builder.CreateSIToFP(rhs, fieldTy, "intToFp");
+            else if (rhs->getType()->isDoubleTy() && fieldTy->isFloatTy())
+                rhs = builder.CreateFPTrunc(rhs, fieldTy, "fpTrunc");
+            else if (rhs->getType()->isFloatTy() && fieldTy->isDoubleTy())
+                rhs = builder.CreateFPExt(rhs, fieldTy, "fpExt");
+        }
 
         builder.CreateStore(rhs, fieldPtr);
         return rhs;
@@ -777,7 +819,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     // enforce strict type annotation
     if (node->GetIsDeclaration() && node->GetStrictVarDatatype().has_value())
     {
-        const std::string& declaredTypeName = node->GetStrictVarDatatype().value();
+        const std::string declaredTypeName = node->GetStrictVarDatatype().value();
         llvm::Type* declaredTy = StringToLLVMType(declaredTypeName);
 
         if (!declaredTy)
@@ -786,10 +828,14 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
             return nullptr;
         }
 
-        if (value->getType() != declaredTy)
+        if (value->getType() != declaredTy && declaredTy->isFloatingPointTy())
         {
-            std::cerr << "Type mismatch: variable '" << name << "' declared as '" << declaredTypeName << "' but initializer has a different type\n";
-            return nullptr;
+            if (value->getType()->isIntegerTy())
+                value = builder.CreateSIToFP(value, declaredTy, "intToFp");
+            else if (value->getType()->isDoubleTy() && declaredTy->isFloatTy())
+                value = builder.CreateFPTrunc(value, declaredTy, "fpTrunc");
+            else if (value->getType()->isFloatTy() && declaredTy->isDoubleTy())
+                value = builder.CreateFPExt(value, declaredTy, "fpExt");
         }
     }
 
@@ -1127,9 +1173,16 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     llvm::Type* returnType = InferenceReturnType(node->GetBodyNode(), node->GetShouldAutoReturn());
 
+    // any struct-returning function uses a hidden pointer ("structRet") for its result, regardless of size
+    llvm::StructType* structReturnStructTy = llvm::dyn_cast<llvm::StructType>(returnType);
+    llvm::Type* llvmReturnType = structReturnStructTy ? llvm::Type::getVoidTy(context) : returnType;
+
     // scan the body for "param::field" usage to detect struct params
     std::vector<std::string> structParamTypes; // parallel to ArgNameToks; "" = not a struct
     std::vector<llvm::Type*> argTypes;
+
+    if (structReturnStructTy)
+        argTypes.push_back(llvm::PointerType::get(context, 0));
 
     for (auto& argTok : node->ArgNameToks())
     {
@@ -1144,16 +1197,28 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
             argTypes.push_back(builder.getInt32Ty());
     }
 
-    llvm::FunctionType* funcType = llvm::FunctionType::get(returnType, argTypes, false);
-
+    llvm::FunctionType* funcType = llvm::FunctionType::get(llvmReturnType, argTypes, false);
     llvm::Function* func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, name, module.get());
+
+    if (structReturnStructTy)
+        func->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, structReturnStructTy));
 
     m_functions[name] = func;
 
-    // Name arguments
+    // Name arguments (the hidden structReturn pointer, if present, is always first and isn't in ArgNameToks)
+    llvm::Value* structReturnPtr = nullptr;
     int idx = 0;
+    bool first = true;
     for (auto& arg : func->args())
     {
+        if (structReturnStructTy && first)
+        {
+            structReturnPtr = &arg;
+            arg.setName("__sret");
+            first = false;
+            continue;
+        }
+        first = false;
         arg.setName(std::get<std::string>(node->ArgNameToks()[idx].argNameTok.GetValue()));
         idx++;
     }
@@ -1166,11 +1231,17 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     // New variable scope
     PushScope();
 
+    llvm::Value* savedStructRetPtr = m_currentStructRetPtr;
+    m_currentStructRetPtr = structReturnPtr;
+
     // Store and allocate variables
     {
         size_t i = 0;
         for (auto& arg : func->args())
         {
+            if (structReturnPtr == &arg)
+                continue;
+
             llvm::AllocaInst* alloca = CreateEntryBlockAlloca(arg.getName().str(), arg.getType());
             builder.CreateStore(&arg, alloca);
             SetVariable(arg.getName().str(), { alloca, false });
@@ -1191,14 +1262,26 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     PopScope();
 
-    if (node->GetShouldAutoReturn() && retVal)
-        builder.CreateRet(retVal);
-    else
+    llvm::BasicBlock* currentBB = builder.GetInsertBlock();
+    if (!currentBB->getTerminator())
     {
-        llvm::BasicBlock* currentBB = builder.GetInsertBlock();
-        if (!currentBB->getTerminator())
+        if (node->GetShouldAutoReturn() && retVal)
         {
-            // build a type-correct fallback return value (ptr null / i32 0)
+            if (structReturnPtr)
+            {
+                builder.CreateStore(retVal, structReturnPtr);
+                builder.CreateRetVoid();
+            }
+            else
+                builder.CreateRet(retVal);
+        }
+        else if (structReturnPtr)
+        {
+            builder.CreateStore(llvm::ConstantAggregateZero::get(structReturnStructTy), structReturnPtr);
+            builder.CreateRetVoid();
+        }
+        else
+        {
             llvm::Value* defaultRet;
             if (returnType->isPointerTy())
                 defaultRet = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(returnType));
@@ -1208,6 +1291,8 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
             builder.CreateRet(defaultRet);
         }
     }
+
+    m_currentStructRetPtr = savedStructRetPtr;
 
     llvm::verifyFunction(*func);
 
@@ -1333,6 +1418,17 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         llvm::Function* func = funcIt->second;
 
         std::vector<llvm::Value*> args;
+
+        // callee returns a struct via a hidden sret pointer -> allocate the destination and pass it first
+        llvm::AllocaInst* structRetAlloca = nullptr;
+        llvm::Type* structRetTy = nullptr;
+        if (func->arg_size() > 0 && func->hasParamAttribute(0, llvm::Attribute::StructRet))
+        {
+            structRetTy = func->getParamStructRetType(0);
+            structRetAlloca = CreateEntryBlockAlloca("sretTmp", structRetTy);
+            args.push_back(structRetAlloca);
+        }
+
         for (auto& argNode : node->GetArgNodes())
         {
             // mirrors the same by-reference logic as the local user-function call path below, so struct args behave consistently
@@ -1366,11 +1462,19 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
                 builder.CreateStore(argVal, tmp);
                 argVal = tmp;
             }
+            else if (args.size() < func->getFunctionType()->getNumParams())
+                argVal = CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
 
             args.push_back(argVal);
         }
 
-        return builder.CreateCall(func, args, "callTmp");
+        llvm::CallInst* call = builder.CreateCall(func, args);
+        if (structRetAlloca)
+        {
+            call->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, structRetTy));
+            return builder.CreateLoad(structRetTy, structRetAlloca, "structResult");
+        }
+        return call;
     }
 
     // Builtin functions
@@ -1394,6 +1498,17 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
     llvm::Function* func = m_functions[name];
 
     std::vector<llvm::Value*> args;
+
+    // callee returns a struct via a hidden sret pointer -> allocate the destination and pass it first
+    llvm::AllocaInst* sretAlloca = nullptr;
+    llvm::Type* sretTy = nullptr;
+    if (func->arg_size() > 0 && func->hasParamAttribute(0, llvm::Attribute::StructRet))
+    {
+        sretTy = func->getParamStructRetType(0);
+        sretAlloca = CreateEntryBlockAlloca("sretTmp", sretTy);
+        args.push_back(sretAlloca);
+    }
+
     for (auto& argNode : node->GetArgNodes())
     {
         // if the argument is a plain variable that already holds a struct, pass the address of its *existing* alloca directly
@@ -1430,23 +1545,41 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
             builder.CreateStore(argVal, tmp);
             argVal = tmp;
         }
+        else if (args.size() < func->getFunctionType()->getNumParams())
+            argVal = CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
 
         args.push_back(argVal);
     }
 
-    return builder.CreateCall(func, args, "callTmp");
+    llvm::CallInst* call = builder.CreateCall(func, args);
+    if (sretAlloca)
+    {
+        call->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, sretTy));
+        return builder.CreateLoad(sretTy, sretAlloca, "structResult");
+    }
+    return call;
 }
 
 llvm::Value *Compiler::Compile_ReturnNode(ReturnNode *node)
 {
-    llvm::Value* val;
-
     if (node->GetNodeToReturn().has_value())
-        val = CompileNode(node->GetNodeToReturn().value());
-    else
-        val = llvm::ConstantInt::get(builder.getInt32Ty(), 0);
+    {
+        llvm::Value* val = CompileNode(node->GetNodeToReturn().value());
+        if (!val)
+            return nullptr;
 
-    return builder.CreateRet(val);
+        if (m_currentStructRetPtr)
+        {
+            builder.CreateStore(val, m_currentStructRetPtr);
+            return builder.CreateRetVoid();
+        }
+        return builder.CreateRet(val);
+    }
+    
+    if (m_currentStructRetPtr)
+        return builder.CreateRetVoid();
+
+    return builder.CreateRet(llvm::ConstantInt::get(builder.getInt32Ty(), 0));
 }
 
 llvm::Value *Compiler::Compile_ContinueNode(ContinueNode *node)
@@ -1627,6 +1760,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
         logicalReturnType = StringToLLVMType(returnTypeString);
 
     std::vector<llvm::Type*> logicalArgTypes;
+    std::vector<std::string> argTypeNames;
     if (!argsString.empty())
     {
         std::stringstream ss(argsString);
@@ -1634,6 +1768,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
         while (std::getline(ss, typeToken, ','))
         {
             trimStr(typeToken);
+            argTypeNames.push_back(typeToken);
             // Extern functions follow C ABI -> structs are passed by value, so map a struct name to its struct type, not a pointer
             llvm::Type* argTy = m_structs.HasType(typeToken) ? static_cast<llvm::Type*>(m_structs.types.at(typeToken)) : StringToLLVMType(typeToken);
             logicalArgTypes.push_back(argTy);
@@ -1715,6 +1850,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
 
     m_externFunctions[moduleAlias][functionName] = func;
     m_externReturnTypeStrings[moduleAlias][functionName] = returnTypeString;
+    m_externParamTypeStrings[moduleAlias][functionName] = argTypeNames;
     m_externAbi[moduleAlias][functionName] = abi;
 
     return nullptr;
@@ -1857,6 +1993,32 @@ std::string Compiler::ScanForStructParamUsage(const std::string &paramName, std:
 
     if (auto* call = dynamic_cast<CallNode*>(body.get()))
     {
+        // whole-value forwarding
+        if (auto* callee = dynamic_cast<VarAccessNode*>(call->GetNodeToCall().get());
+            callee && callee->GetIsNamespaced())
+        {
+            const std::string ns = callee->GetNamespaceName().value();
+            const std::string fnName = std::get<std::string>(callee->GetVarNameToken().GetValue());
+
+            auto externIt = m_externFunctions.find(ns);
+            if (externIt != m_externFunctions.end() && externIt->second.count(fnName))
+            {
+                auto argNodes = call->GetArgNodes();
+                auto& paramTypeNames = m_externParamTypeStrings[ns][fnName];
+
+                for (size_t i = 0; i < argNodes.size() && i < paramTypeNames.size(); ++i)
+                {
+                    auto* va = dynamic_cast<VarAccessNode*>(argNodes[i].get());
+                    if (va && !va->GetIsNamespaced() &&
+                        std::get<std::string>(va->GetVarNameToken().GetValue()) == paramName &&
+                        m_structs.HasType(paramTypeNames[i]))
+                    {
+                        return paramTypeNames[i];
+                    }
+                }
+            }
+        }
+
         for (auto& arg : call->GetArgNodes())
             if (auto r = ScanForStructParamUsage(paramName, arg); !r.empty())
                 return r;
@@ -1899,6 +2061,13 @@ std::string Compiler::ScanForStructParamUsage(const std::string &paramName, std:
         return ScanForStructParamUsage(paramName, forNode->GetBodyNode());
 
     return "";
+}
+
+llvm::Type *Compiler::GetLogicalFunctionReturnType(llvm::Function *func)
+{
+    if (func->arg_size() > 0 && func->hasParamAttribute(0, llvm::Attribute::StructRet))
+        return func->getParamStructRetType(0);
+    return func->getReturnType();
 }
 
 // returns the LLVM type a single expression will produce. 'locals' carries variable types tracked by InferReturnTypeBlock
@@ -1964,12 +2133,36 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
     {
         if (auto va = dynamic_cast<VarAccessNode*>(call->GetNodeToCall().get()))
         {
+            if (va->GetIsNamespaced())
+            {
+                const std::string namespaceName = va->GetNamespaceName().value();
+                std::string calleeName = std::get<std::string>(va->GetVarNameToken().GetValue());
+
+                // extern (C ABI) function: use the logical return-type name recorded at #extern-declaration time,
+                // the LLVM function's actual return type may be ABI-coerced or indirect and no longer matches the language-level type
+                auto externModIt = m_externFunctions.find(namespaceName);
+                if (externModIt != m_externFunctions.end() && externModIt->second.count(calleeName))
+                {
+                    const std::string& retTypeName = m_externReturnTypeStrings[namespaceName][calleeName];
+                    if (m_structs.HasType(retTypeName))
+                        return m_structs.types.at(retTypeName);
+                    return StringToLLVMType(retTypeName);
+                }
+
+                // cross-module Eugen++ function
+                auto modIt = m_moduleFunctions.find(namespaceName);
+                if (modIt != m_moduleFunctions.end() && modIt->second.count(calleeName))
+                    return GetLogicalFunctionReturnType(modIt->second.at(calleeName));
+
+                return builder.getInt32Ty();
+            }
+
             std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
             auto it = m_functions.find(name);
             if (it != m_functions.end())
-                return it->second->getReturnType();
+                return GetLogicalFunctionReturnType(it->second);
         }
-        return builder.getInt32Ty(); // forward/unknown call → assume i32
+        return builder.getInt32Ty(); // forward/unknown call, assume i32
     }
  
     return builder.getInt32Ty();
@@ -2135,7 +2328,7 @@ llvm::Value *Compiler::IntToString(llvm::Value *val)
 }
 
 // Supported primitive names:
-//   bool                        -> i1
+//   bool                        -> i8 (C ABI width)
 //   uint8 / int8 / char         -> i8
 //   uint16 / int16              -> i16
 //   int / int32 / uint32        -> i32
@@ -2149,7 +2342,7 @@ llvm::Type *Compiler::StringToLLVMType(const std::string &typeName)
 {
     // 1-bit boolean
     if (typeName == "bool")
-        return builder.getInt1Ty();
+        return builder.getInt8Ty();
  
     // 8-bit integers
     if (typeName == "uint8" || typeName == "int8" || typeName == "char")
@@ -2362,6 +2555,36 @@ llvm::Value *Compiler::CoerceStructForCall(llvm::Value *structPtr, const StructA
     uint64_t copyBytes = std::min<uint64_t>(abi.size, dl.getTypeAllocSize(abi.coercedType));
     builder.CreateMemCpy(scratch, scratch->getAlign(), structPtr, llvm::Align(1), copyBytes);
     return builder.CreateLoad(abi.coercedType, scratch, "abiCoerced");
+}
+
+llvm::Value *Compiler::CoerceScalarForParam(llvm::Value *val, llvm::Type *paramTy)
+{
+    if (!val || val->getType() == paramTy)
+        return val;
+
+    llvm::Type* valTy = val->getType();
+
+    if (paramTy->isFloatingPointTy())
+    {
+        if (valTy->isIntegerTy())
+            return builder.CreateSIToFP(val, paramTy, "argIntToFp");
+        if (valTy->isDoubleTy() && paramTy->isFloatTy())
+            return builder.CreateFPTrunc(val, paramTy, "argFpTrunc");
+        if (valTy->isFloatTy() && paramTy->isDoubleTy())
+            return builder.CreateFPExt(val, paramTy, "argFpExt");
+    }
+    else if (paramTy->isIntegerTy() && valTy->isFloatingPointTy())
+    {
+        return builder.CreateFPToSI(val, paramTy, "argFpToInt");
+    }
+    else if (paramTy->isIntegerTy() && valTy->isIntegerTy() && valTy != paramTy)
+    {
+        if (valTy->getIntegerBitWidth() < paramTy->getIntegerBitWidth())
+            return builder.CreateSExt(val, paramTy, "argIntExt");
+        return builder.CreateTrunc(val, paramTy, "argIntTrunc");
+    }
+
+    return val;
 }
 
 llvm::Value *Compiler::DecoerceStructReturn(llvm::Value *coercedVal, llvm::StructType *structTy)

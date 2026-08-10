@@ -134,8 +134,10 @@ private:
     std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_externFunctions;
     std::unordered_map<std::string, std::unordered_map<std::string, ExternFunctionAbi>> m_externAbi;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_externReturnTypeStrings;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::string>>> m_externParamTypeStrings;
     std::unordered_map<std::string, ArrayInfo> m_arrays;
     StructRegistry m_structs;
+    llvm::Value* m_currentStructRetPtr = nullptr; // non-null while compiling a struct-returning function's body
 
     llvm::Function* concatFunc;
     llvm::Function* intToStrFunc;
@@ -180,6 +182,7 @@ private:
     void FreeLocalHeapValues();
     // recursively scans a function body for any "paramName::field" access or assignment. Returns the struct type name whose fields match, or "" if the parameter is not used as a struct inside this body.
     std::string ScanForStructParamUsage(const std::string& paramName, std::shared_ptr<Node> body);
+    llvm::Type* GetLogicalFunctionReturnType(llvm::Function* func);
 
     using LocalTypeMap = std::unordered_map<std::string, llvm::Type*>;
     llvm::Type* InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap& locals);
@@ -206,6 +209,7 @@ private:
     void InitializeTargetInfo();
     StructAbiInfo ClassifyStructAbi(llvm::StructType* _struct);
     llvm::Value* CoerceStructForCall(llvm::Value* structPtr, const StructAbiInfo& abi);
+    llvm::Value* CoerceScalarForParam(llvm::Value* val, llvm::Type* paramTy);
     llvm::Value* DecoerceStructReturn(llvm::Value* coercedVal, llvm::StructType* structTy);
     std::string DetectLinker();
 };

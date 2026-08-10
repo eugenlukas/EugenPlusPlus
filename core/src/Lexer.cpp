@@ -180,7 +180,7 @@ Token Lexer::makeNumber()
 		Advance();
 	}
 
-	//std::cout << numStr << std::endl;
+	//std::cout << "\"" << numStr << "\" with a dotCout of:" << std::to_string(dotCount) << std::endl;
 	
 	if (dotCount == 0)
 		return Token(TT_INT, std::stoi(numStr), posStart, pos);

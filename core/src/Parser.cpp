@@ -855,8 +855,25 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 		Advance();
 		res.RegisterAdvancement();
 
-		std::shared_ptr<Node> body = res.Register(Statements());
-		if (res.HasError()) return res;
+		// Check for body
+		bool hasBodyContent = true;
+		std::shared_ptr<Node> body = nullptr;
+		while (currentToken.GetType() == TT_NEWLINE)
+		{
+			Advance();
+			res.RegisterAdvancement();
+		}
+		if (currentToken.GetType() == TT_RCURLYBRACKET)
+		{
+			hasBodyContent = false;
+			std::cout << "Warning(l." << currentToken.GetPosStart().GetLineNumber() << "): If statement has empty body\n";
+		}
+
+		if (hasBodyContent)
+		{
+			body = res.Register(Statements());
+			if (res.HasError()) return res;
+		}
 
 		cases.push_back(IfCase(condition, body, true));
 
@@ -866,7 +883,7 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 		Advance();
 		res.RegisterAdvancement();
 
-		if (currentToken.GetType() == TT_NEWLINE && !Peek().Matches(TT_KEYWORD, "if	"))
+		if (currentToken.GetType() == TT_NEWLINE && (Peek().Matches(TT_KEYWORD, "elif") || Peek().Matches(TT_KEYWORD, "else")))
 		{
 			Advance();
 			res.RegisterAdvancement();
