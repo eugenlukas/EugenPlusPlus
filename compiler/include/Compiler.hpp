@@ -6,8 +6,9 @@
 #include <map>
 #include <unordered_set>
 
-#include <Nodes.hpp>
-#include <BuiltinFunctions.hpp>
+#include "Nodes.hpp"
+#include "BuiltinFunctions.hpp"
+#include "AbiClassifier.hpp"
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
@@ -62,39 +63,49 @@ struct StructRegistry
     bool IsStructVar(const std::string& varName) const { return varToType.count(varName) > 0; }
 };
 
-// x86-64 struct-by-value ABI classification (System V and Microsoft x64)
-enum class AbiPassKind
-{
-    Direct,     // struct fits in register(s)
-    Indirect,   // struct goes through memory (byval on SysV, plain pointer-to-copy on Windows, or sret on return)
-};
-
-struct StructAbiInfo
-{
-    AbiPassKind kind = AbiPassKind::Indirect;
-    llvm::Type* coercedType = nullptr; // when kind == indirect
-    uint64_t size = 0;
-};
-
-struct ExternFunctionAbi
-{
-    std::vector<std::optional<StructAbiInfo>> paramAbi;
-    std::optional<StructAbiInfo> returnAbi;
-};
-
 struct LoopContext
 {
     llvm::BasicBlock* continueBB;
     llvm::BasicBlock* breakBB;
 };
 
+struct ExternFunctionInfo
+{
+    llvm::Function* function = nullptr;
+    AbiClassifier::FunctionAbi abi;
+    std::string returnTypeName; // logical (pre-Abi) return type name
+    std::vector<std::string> paramTypeNames; // logical (pre-Abi), in order, parameter type names
+};
+
+struct LinkedLibrary
+{
+    std::string path;
+    std::unordered_map<std::string, ExternFunctionInfo> functions;
+};
+
+// # module'd file, keyed by its alias
+struct ProgramModule
+{
+    std::unordered_map<std::string, llvm::Function*> functions;
+    std::unordered_map<std::string, VarInfo> variables; // top-level/global variables
+};
+
+struct RuntimeFunctions
+{
+    llvm::Function* concat = nullptr;
+    llvm::Function* intToStr = nullptr;
+    llvm::Function* free = nullptr;
+    llvm::Function* printf = nullptr;
+    llvm::Function* inputStr = nullptr;
+    llvm::Function* inputNum = nullptr;
+    llvm::Function* malloc = nullptr;
+};
+
 class Compiler
 {
 public:
-    Compiler() : builder(context)
+    Compiler() : builder(context), m_abi(context, builder, *(module = std::make_unique<llvm::Module>("main_module", context)))
     {
-        module = std::make_unique<llvm::Module>("main_module", context);
-
         InitializeTargetInfo();
 
         DeclareConcat();
@@ -121,31 +132,22 @@ private:
     llvm::IRBuilder<> builder;
     std::unique_ptr<llvm::Module> module;
     std::unique_ptr<llvm::TargetMachine> m_targetMachine;
+    AbiClassifier m_abi;
 
     std::vector<std::unordered_map<std::string, VarInfo>> m_scopes;
     std::unordered_set<llvm::Value*> m_heapValues;
     std::map<std::string, llvm::Function*> m_functions;
-    std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_moduleFunctions;
-    std::unordered_map<std::string, std::unordered_map<std::string, VarInfo>> m_moduleVariables; // global variables / top-level
     std::vector<LoopContext> m_loopStack;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
     std::unordered_map<std::string, llvm::Constant*> m_constants;
-    std::unordered_map<std::string, std::string>  m_linkedLibs;
-    std::unordered_map<std::string, std::unordered_map<std::string, llvm::Function*>> m_externFunctions;
-    std::unordered_map<std::string, std::unordered_map<std::string, ExternFunctionAbi>> m_externAbi;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_externReturnTypeStrings;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<std::string>>> m_externParamTypeStrings;
     std::unordered_map<std::string, ArrayInfo> m_arrays;
     StructRegistry m_structs;
     llvm::Value* m_currentStructRetPtr = nullptr; // non-null while compiling a struct-returning function's body
 
-    llvm::Function* concatFunc;
-    llvm::Function* intToStrFunc;
-    llvm::Function* freeFunc;
-    llvm::Function* printfFunc;
-    llvm::Function* inputStrFunc;
-    llvm::Function* inputNumFunc;
-    llvm::Function* mallocFunc;
+    std::unordered_map<std::string, LinkedLibrary> m_linkedLibs; // keyed by # link alias
+    std::unordered_map<std::string, ProgramModule> m_modules; // keyed by # module alias
+
+    RuntimeFunctions m_runtime;
 
 private:
     llvm::Value* CompileNode(std::shared_ptr<Node> node);
@@ -207,9 +209,5 @@ private:
     llvm::Value* GetArrayElementPtr(llvm::AllocaInst* alloca, llvm::Type* elementType, int length, bool isDynamic, llvm::Value* indexVal, const std::string& name);
 
     void InitializeTargetInfo();
-    StructAbiInfo ClassifyStructAbi(llvm::StructType* _struct);
-    llvm::Value* CoerceStructForCall(llvm::Value* structPtr, const StructAbiInfo& abi);
-    llvm::Value* CoerceScalarForParam(llvm::Value* val, llvm::Type* paramTy);
-    llvm::Value* DecoerceStructReturn(llvm::Value* coercedVal, llvm::StructType* structTy);
     std::string DetectLinker();
 };

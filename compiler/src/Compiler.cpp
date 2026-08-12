@@ -79,12 +79,12 @@ void Compiler::LinkObjectFile(const std::string &filepath)
         "-lruntime ";
     
     // append each natively linked library
-    for (auto& [alias, libFilepath] : m_linkedLibs)
+    for (auto& linkedLib : m_linkedLibs)
     {
-        std::filesystem::path lp(libFilepath);
+        std::filesystem::path lp(linkedLib.second.path);
         std::string libDir = lp.parent_path().string();
  
-        cmd += "\"" + libFilepath + "\" ";
+        cmd += "\"" + linkedLib.second.path + "\" ";
 #ifndef _WIN32
         // On Linux/macOS encode the library's directory into the binary's
         // rpath so dlopen/the dynamic linker finds it automatically.
@@ -293,14 +293,14 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
 
             llvm::Value* oldBase = builder.CreateLoad(llvm::PointerType::get(info.elementType, 0), alloca, name);
             llvm::Value* oldRaw = builder.CreateBitCast(oldBase, builder.getInt8Ty()->getPointerTo(), name + "OldRaw");
-            builder.CreateCall(freeFunc, { oldRaw });
+            builder.CreateCall(m_runtime.free, { oldRaw });
             m_heapValues.erase(oldBase);
 
             const llvm::DataLayout& dl = module->getDataLayout();
             uint64_t elemSize = dl.getTypeAllocSize(info.elementType);
             llvm::Value* sizeVal = llvm::ConstantInt::get(builder.getInt64Ty(), elemSize * (uint64_t)std::max(length, 0));
 
-            llvm::Value* raw = builder.CreateCall(mallocFunc, { sizeVal }, name + "Raw");
+            llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { sizeVal }, name + "Raw");
             llvm::Value* basePtr = builder.CreateBitCast(raw, llvm::PointerType::get(info.elementType, 0), name + "Ptr");
 
             builder.CreateStore(basePtr, alloca);
@@ -314,7 +314,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
         uint64_t elemSize = dl.getTypeAllocSize(info.elementType);
         llvm::Value* sizeVal = llvm::ConstantInt::get(builder.getInt64Ty(), elemSize * (uint64_t)std::max(length, 0));
 
-        llvm::Value* raw = builder.CreateCall(mallocFunc, { sizeVal }, name + "Raw");
+        llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { sizeVal }, name + "Raw");
         llvm::Value* basePtr = builder.CreateBitCast(raw, llvm::PointerType::get(info.elementType, 0), name + "Ptr");
 
         alloca = CreateEntryBlockAlloca(name, llvm::PointerType::get(info.elementType, 0));
@@ -475,7 +475,7 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
         if (op == TT_GTEQ)  return bothFP ? builder.CreateFCmpOGE(left, right, "gteTmp") : builder.CreateICmpSGE(left, right, "gteTmp");
         if (node->GetOpToken().Matches(TT_KEYWORD, "and") || node->GetOpToken().Matches(TT_KEYWORD, "or"))
         {
-            // Normalize both operands to a clean i1 truth value before combiningwer.
+            // Normalize both operands to a clean i1 truth value before combining.
             llvm::Value* lBool = builder.CreateICmpNE(left, llvm::ConstantInt::get(left->getType(), 0), "lBool");
             llvm::Value* rBool = builder.CreateICmpNE(right, llvm::ConstantInt::get(right->getType(), 0), "rBool");
             llvm::Value* result = node->GetOpToken().Matches(TT_KEYWORD, "and") ? builder.CreateAnd(lBool, rBool, "andTmp")
@@ -519,7 +519,20 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
         // string + string
         if (leftTy == strTy && rightTy == strTy)
         {
-            llvm::Value* val = builder.CreateCall(concatFunc, { left, right }, "strcatTmp");
+            llvm::Value* val = builder.CreateCall(m_runtime.concat, { left, right }, "strcatTmp");
+
+            // free operands
+            if (m_heapValues.contains(left))
+            {
+                builder.CreateCall(m_runtime.free, { left });
+                m_heapValues.erase(left);
+            }
+            if (m_heapValues.contains(right))
+            {
+                builder.CreateCall(m_runtime.free, { right });
+                m_heapValues.erase(right);
+            }
+
             m_heapValues.insert(val);
             return val;
         }
@@ -528,22 +541,120 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
         if (leftTy->isPointerTy() && (rightTy->isIntegerTy() || rightTy->isDoubleTy()))
         {
             llvm::Value* rightStr = IntToString(right);
-            llvm::Value* val = builder.CreateCall(concatFunc, { left, rightStr}, "strcatTmp");
+            llvm::Value* val = builder.CreateCall(m_runtime.concat, { left, rightStr}, "strcatTmp");
+
+            // free old stuff
+            builder.CreateCall(m_runtime.free, { rightStr });
+            m_heapValues.erase(rightStr);
+
+            if (m_heapValues.contains(left))
+            {
+                builder.CreateCall(m_runtime.free, { left });
+                m_heapValues.erase(left);
+            }
+
             m_heapValues.insert(val);
             return val;
         }
-
-        //ToDo: List + ListVar
 
         std::cerr << "Unsupported binary operation '+' on type: '" << leftTyStr << "' and '" << rightTyStr << "'\n";
         return nullptr;
     }
     if (op == TT_MUL)
     {
-        // ToDo: string * number
-        // ToDo: number * string
-        // ToDo: List * List
-        
+        // string * int or int * string
+        //    Compile-time fold: if both operands are literal AST nodes -> no runtime loop, no allocation
+        auto* leftStrLit  = dynamic_cast<StringNode*>(node->GetLeftNode().get());
+        auto* rightStrLit = dynamic_cast<StringNode*>(node->GetRightNode().get());
+        auto* leftNumLit  = dynamic_cast<NumberNode*>(node->GetLeftNode().get());
+        auto* rightNumLit = dynamic_cast<NumberNode*>(node->GetRightNode().get());
+
+        StringNode* strLit = leftStrLit ? leftStrLit : rightStrLit;
+        NumberNode* numLit = leftStrLit ? rightNumLit : leftNumLit;
+
+        if (strLit && numLit && std::holds_alternative<int>(numLit->GetToken().GetValue()))
+        {
+            int count = std::get<int>(numLit->GetToken().GetValue());
+            const std::string& piece = std::get<std::string>(strLit->GetToken().GetValue());
+
+            std::string folded;
+            folded.reserve(count > 0 ? piece.size() * static_cast<size_t>(count) : 0);
+            for (int i = 0; i < count; ++i)
+                folded += piece;
+
+            return builder.CreateGlobalStringPtr(folded, "strMulConst");
+        }
+
+        //    Runtime path
+        llvm::Value* strVal = nullptr;
+        llvm::Value* countVal = nullptr;
+        if (leftTy->isPointerTy() && rightTy->isIntegerTy())
+        {
+            strVal = left;
+            countVal = right;
+        }
+        else if (leftTy->isIntegerTy() && rightTy->isPointerTy())
+        {
+            strVal = right;
+            countVal = left;
+        }
+        if (strVal && countVal)
+        {
+            llvm::Function* function = builder.GetInsertBlock()->getParent();
+            llvm::Type* strTy = builder.getInt8Ty()->getPointerTo();
+
+            // normalize count to i32
+            if (countVal->getType() != builder.getInt32Ty())
+                countVal = builder.CreateIntCast(countVal, builder.getInt32Ty(), true, "strMulCount");
+            
+            llvm::AllocaInst* resultAlloca = CreateEntryBlockAlloca("strMulResult", strTy);
+            llvm::AllocaInst* counterAlloca = CreateEntryBlockAlloca("strMulCounter", builder.getInt32Ty());
+
+            // empty string (no global constant) so every iteration's previous accumulator value is uniformly heap-owned and safe to free
+            llvm::Value* initialBuf = builder.CreateCall(m_runtime.malloc, { llvm::ConstantInt::get(builder.getInt64Ty(), 1) }, "strMulInit");
+            builder.CreateStore(llvm::ConstantInt::get(builder.getInt8Ty(), 0), initialBuf);
+            builder.CreateStore(initialBuf, resultAlloca);
+            builder.CreateStore(llvm::ConstantInt::get(builder.getInt32Ty(), 0), counterAlloca);
+
+            llvm::BasicBlock* condBB = llvm::BasicBlock::Create(context, "strMulCond", function);
+            llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(context, "strMulBody", function);
+            llvm::BasicBlock* endBB = llvm::BasicBlock::Create(context, "strMulEnd", function);
+
+            builder.CreateBr(condBB);
+
+            // counter < count ?
+            builder.SetInsertPoint(condBB);
+            llvm::Value* counterVal = builder.CreateLoad(builder.getInt32Ty(), counterAlloca, "strMulCounterVal");
+            llvm::Value* cond = builder.CreateICmpSLT(counterVal, countVal, "strMulLoopCond");
+            builder.CreateCondBr(cond, bodyBB, endBB);
+
+            // result = concat(result, str), counter++
+            builder.SetInsertPoint(bodyBB);
+            llvm::Value* prevResult = builder.CreateLoad(strTy, resultAlloca, "strMulPrev");
+            llvm::Value* newResult = builder.CreateCall(m_runtime.concat, { prevResult, strVal }, "strMulConcat");
+            builder.CreateCall(m_runtime.free, { prevResult });
+            builder.CreateStore(newResult, resultAlloca);
+
+            llvm::Value* nextCounter = builder.CreateAdd(builder.CreateLoad(builder.getInt32Ty(), counterAlloca, "strMulCounterVal2"),
+            llvm::ConstantInt::get(builder.getInt32Ty(), 1), "strMulNext");
+
+            builder.CreateStore(nextCounter, counterAlloca);
+            builder.CreateBr(condBB);
+
+            builder.SetInsertPoint(endBB);
+            llvm::Value* finalResult = builder.CreateLoad(strTy, resultAlloca, "strMulFinal");
+
+            // strVal was read, if it was itself an unbound heap temporary, free it now that the loop is done
+            if (m_heapValues.contains(strVal))
+            {
+                builder.CreateCall(m_runtime.free, { strVal });
+                m_heapValues.erase(strVal);
+            }
+
+            m_heapValues.insert(finalResult);
+            return finalResult;
+        }
+
         std::cerr << "Unsupported binary operation 'MUL' on type: '" << leftTyStr << "' and '" << rightTyStr << "'\n";
         return nullptr;
     }
@@ -625,17 +736,17 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
         }
 
         // module-variable access
-        auto modIt = m_moduleVariables.find(namespaceName);
-        if (modIt == m_moduleVariables.end())
+        auto modIt = m_modules.find(namespaceName);
+        if (modIt == m_modules.end())
         {
-            std::cerr << "Module '" << namespaceName << "' not found\n";
+            std::cerr << "Module-variable access error: Module '" << namespaceName << "' not found\n";
             return nullptr;
         }
 
-        auto varIt = modIt->second.find(name);
-        if (varIt == modIt->second.end())
+        auto varIt = modIt->second.variables.find(name);
+        if (varIt == modIt->second.variables.end())
         {
-            std::cerr << "'" << name << "' not found in module '" << namespaceName << "'\n";
+            std::cerr << "Module-variable access error: '" << name << "' not found in module '" << namespaceName << "'\n";
             return nullptr;
         }
 
@@ -868,7 +979,19 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
         SetVariable(name, { alloca, isHeap });
     }
     else
+    {
         alloca = existing->alloca;
+
+        // free whatever this variable currently owns before the store
+        if (existing->isHeapAllocated)
+        {
+            llvm::Value* oldVal = builder.CreateLoad(alloca->getAllocatedType(), alloca, name + "Old");
+            builder.CreateCall(m_runtime.free, { oldVal });
+        }
+
+        // update heap flag
+        existing->isHeapAllocated = isHeap;
+    }
 
     if (alloca->getAllocatedType() != type)
     {
@@ -1316,15 +1439,15 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         const std::string namespaceName = varAccess->GetNamespaceName().value();
 
         // call function from extern .dll or .so file
-        auto externModIt = m_externFunctions.find(namespaceName);
-        if (externModIt != m_externFunctions.end())
+        auto externModIt = m_linkedLibs.find(namespaceName);
+        if (externModIt != m_linkedLibs.end())
         {
-            auto externFuncIt = externModIt->second.find(name);
-            if (externFuncIt != externModIt->second.end())
+            auto externFuncIt = externModIt->second.functions.find(name);
+            if (externFuncIt != externModIt->second.functions.end())
             {
-                llvm::Function* externFunc = externFuncIt->second;
+                llvm::Function* externFunc = externFuncIt->second.function;
                 llvm::FunctionType* externFunctTy = externFunc->getFunctionType();
-                const ExternFunctionAbi& abi = m_externAbi[namespaceName][name];
+                const AbiClassifier::FunctionAbi& abi = m_linkedLibs[namespaceName].functions[name].abi;
                 bool sysV = !llvm::Triple(module->getTargetTriple()).isOSWindows();
 
                 std::vector<llvm::Value*> args;
@@ -1332,9 +1455,9 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
                 llvm::AllocaInst* structReturnAlloca = nullptr;
                 llvm::StructType* structReturnStructType = nullptr;
 
-                if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiPassKind::Indirect)
+                if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiClassifier::PassKind::Indirect)
                 {
-                    const std::string& retTypeName = m_externReturnTypeStrings[namespaceName][name];
+                    const std::string& retTypeName = m_linkedLibs[namespaceName].functions[name].returnTypeName;
                     structReturnStructType = m_structs.types.at(retTypeName);
                     structReturnAlloca = CreateEntryBlockAlloca("externSret", structReturnStructType);
                     args.push_back(structReturnAlloca);
@@ -1353,14 +1476,14 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
                         continue;
                     }
 
-                    const StructAbiInfo& argAbi = *abi.paramAbi[i];
+                    const AbiClassifier::StructAbiInfo& argAbi = *abi.paramAbi[i];
 
                     // argVal is already a loaded struct value, spill it so we have an address to coerce/copy from
                     llvm::AllocaInst* srcAlloca = CreateEntryBlockAlloca("externStructArg", argVal->getType());
                     builder.CreateStore(argVal, srcAlloca);
 
-                    if (argAbi.kind == AbiPassKind::Direct)
-                        args.push_back(CoerceStructForCall(srcAlloca, argAbi));
+                    if (argAbi.kind == AbiClassifier::PassKind::Direct)
+                        args.push_back(m_abi.CoerceForCall(srcAlloca, argAbi));
                     else if (sysV)
                     {
                         // MEMORY class: pass the address, marked byval so the backend copies it onto the stack the way the callee expects
@@ -1389,11 +1512,11 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
                     return llvm::ConstantInt::get(builder.getInt32Ty(), 0);
                 }
 
-                if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiPassKind::Direct)
+                if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiClassifier::PassKind::Direct)
                 {
-                    const std::string& retTypeName = m_externReturnTypeStrings[namespaceName][name];
+                    const std::string& retTypeName = m_linkedLibs[namespaceName].functions[name].returnTypeName;
                     llvm::StructType* retStructTy = m_structs.types.at(retTypeName);
-                    return DecoerceStructReturn(call, retStructTy);
+                    return m_abi.Decoerce(call, retStructTy);
                 }
 
                 return call;
@@ -1401,17 +1524,17 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         }
 
         // call function in separate module
-        auto modIt = m_moduleFunctions.find(namespaceName);
-        if (modIt == m_moduleFunctions.end())
+        auto modIt = m_modules.find(namespaceName);
+        if (modIt == m_modules.end())
         {
-            std::cerr << "Module '" << namespaceName << "' not found\n";
+            std::cerr << "Function calling in seperate Module error: Module '" << namespaceName << "' not found\n";
             return nullptr;
         }
 
-        auto funcIt = modIt->second.find(name);
-        if (funcIt == modIt->second.end())
+        auto funcIt = modIt->second.functions.find(name);
+        if (funcIt == modIt->second.functions.end())
         {
-            std::cerr << "Function '" << name << "' not found in module '" << namespaceName << "'\n";
+            std::cerr << "Function calling in sperate module error: Function '" << name << "' not found in module '" << namespaceName << "'\n";
             return nullptr;
         }
 
@@ -1463,7 +1586,7 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
                 argVal = tmp;
             }
             else if (args.size() < func->getFunctionType()->getNumParams())
-                argVal = CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
+                argVal = m_abi.CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
 
             args.push_back(argVal);
         }
@@ -1546,7 +1669,7 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
             argVal = tmp;
         }
         else if (args.size() < func->getFunctionType()->getNumParams())
-            argVal = CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
+            argVal = m_abi.CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
 
         args.push_back(argVal);
     }
@@ -1683,14 +1806,14 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
     for (auto& [name, func] : m_functions)
     {
         if (functionsBefore.find(name) == functionsBefore.end())
-            m_moduleFunctions[alias][name] = func;
+            m_modules[alias].functions[name] = func;
     }
 
     // record module-level variables (globals / top-level allocas)
     for (auto& [name, info] : CollectAllVariables())
     {
         if (variablesBefore.find(name) == variablesBefore.end())
-            m_moduleVariables[alias][name] = info;
+            m_modules[alias].variables[name] = info;
     }
 
     return nullptr;
@@ -1716,7 +1839,7 @@ llvm::Value *Compiler::Compile_LinkNode(LinkNode *node)
     // normalize
     filepath = std::filesystem::canonical(filepath);
 
-    m_linkedLibs[node->GetAlias()] = filepath.string();
+    m_linkedLibs[node->GetAlias()].path = filepath.string();
 
     return nullptr;
 }
@@ -1777,7 +1900,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
 
     // lowering ABI: coerce struct-by-value types into whatever the real C ABI expects,
     // so calls match System V x86-64 (Linux .so) or Microsoft x64 (Windows .dll) regardless of struct size
-    ExternFunctionAbi abi;
+    AbiClassifier::FunctionAbi abi;
     std::vector<llvm::Type*> abiArgTypes;
     std::vector<std::pair<unsigned, llvm::StructType*>> byvalIndices; // SysV only
     bool sysV = !llvm::Triple(module->getTargetTriple()).isOSWindows();
@@ -1785,10 +1908,10 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
     llvm::Type* abiReturnType = logicalReturnType;
     if (auto* retStruct = llvm::dyn_cast<llvm::StructType>(logicalReturnType))
     {
-        StructAbiInfo retAbi = ClassifyStructAbi(retStruct);
+        AbiClassifier::StructAbiInfo retAbi = m_abi.Classify(retStruct);
         abi.returnAbi = retAbi;
 
-        if (retAbi.kind == AbiPassKind::Direct)
+        if (retAbi.kind == AbiClassifier::PassKind::Direct)
         {
             abiReturnType = retAbi.coercedType;
         }
@@ -1803,10 +1926,10 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
     {
         if (auto* argStruct = llvm::dyn_cast<llvm::StructType>(argTy))
         {
-            StructAbiInfo argAbi = ClassifyStructAbi(argStruct);
+            AbiClassifier::StructAbiInfo argAbi = m_abi.Classify(argStruct);
             abi.paramAbi.push_back(argAbi);
 
-            if (argAbi.kind == AbiPassKind::Direct)
+            if (argAbi.kind == AbiClassifier::PassKind::Direct)
             {
                 abiArgTypes.push_back(argAbi.coercedType);
             }
@@ -1832,7 +1955,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
         llvm::FunctionType* funcType = llvm::FunctionType::get(abiReturnType, abiArgTypes, /*isVarArg=*/false);
         func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, functionName, module.get());
 
-        if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiPassKind::Indirect)
+        if (abi.returnAbi.has_value() && abi.returnAbi->kind == AbiClassifier::PassKind::Indirect)
             func->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, llvm::cast<llvm::StructType>(logicalReturnType)));
 
         for (auto& [idx, structTy] : byvalIndices)
@@ -1848,10 +1971,10 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
         }
     }
 
-    m_externFunctions[moduleAlias][functionName] = func;
-    m_externReturnTypeStrings[moduleAlias][functionName] = returnTypeString;
-    m_externParamTypeStrings[moduleAlias][functionName] = argTypeNames;
-    m_externAbi[moduleAlias][functionName] = abi;
+    m_linkedLibs[moduleAlias].functions[functionName].function = func;
+    m_linkedLibs[moduleAlias].functions[functionName].returnTypeName = returnTypeString;
+    m_linkedLibs[moduleAlias].functions[functionName].paramTypeNames = argTypeNames;
+    m_linkedLibs[moduleAlias].functions[functionName].abi = abi;
 
     return nullptr;
 }
@@ -1934,7 +2057,7 @@ void Compiler::FreeLocalHeapValues()
 
         llvm::Value* loaded = builder.CreateLoad(info.alloca->getAllocatedType(), info.alloca, name);
 
-        builder.CreateCall(freeFunc, { loaded });
+        builder.CreateCall(m_runtime.free, { loaded });
     }
 }
 
@@ -2000,11 +2123,11 @@ std::string Compiler::ScanForStructParamUsage(const std::string &paramName, std:
             const std::string ns = callee->GetNamespaceName().value();
             const std::string fnName = std::get<std::string>(callee->GetVarNameToken().GetValue());
 
-            auto externIt = m_externFunctions.find(ns);
-            if (externIt != m_externFunctions.end() && externIt->second.count(fnName))
+            auto externIt = m_linkedLibs.find(ns);
+            if (externIt != m_linkedLibs.end() && externIt->second.functions.count(fnName))
             {
                 auto argNodes = call->GetArgNodes();
-                auto& paramTypeNames = m_externParamTypeStrings[ns][fnName];
+                auto& paramTypeNames = m_linkedLibs[ns].functions[fnName].paramTypeNames;
 
                 for (size_t i = 0; i < argNodes.size() && i < paramTypeNames.size(); ++i)
                 {
@@ -2140,19 +2263,19 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
 
                 // extern (C ABI) function: use the logical return-type name recorded at #extern-declaration time,
                 // the LLVM function's actual return type may be ABI-coerced or indirect and no longer matches the language-level type
-                auto externModIt = m_externFunctions.find(namespaceName);
-                if (externModIt != m_externFunctions.end() && externModIt->second.count(calleeName))
+                auto externModIt = m_linkedLibs.find(namespaceName);
+                if (externModIt != m_linkedLibs.end() && externModIt->second.functions.count(calleeName))
                 {
-                    const std::string& retTypeName = m_externReturnTypeStrings[namespaceName][calleeName];
+                    const std::string& retTypeName = m_linkedLibs[namespaceName].functions[calleeName].returnTypeName;
                     if (m_structs.HasType(retTypeName))
                         return m_structs.types.at(retTypeName);
                     return StringToLLVMType(retTypeName);
                 }
 
                 // cross-module Eugen++ function
-                auto modIt = m_moduleFunctions.find(namespaceName);
-                if (modIt != m_moduleFunctions.end() && modIt->second.count(calleeName))
-                    return GetLogicalFunctionReturnType(modIt->second.at(calleeName));
+                auto modIt = m_modules.find(namespaceName);
+                if (modIt != m_modules.end() && modIt->second.functions.count(calleeName))
+                    return GetLogicalFunctionReturnType(modIt->second.functions.at(calleeName));
 
                 return builder.getInt32Ty();
             }
@@ -2251,7 +2374,7 @@ void Compiler::DeclareConcat()
     std::vector<llvm::Type*> args = { strTy, strTy };
 
     llvm::FunctionType* funcType = llvm::FunctionType::get(strTy, args, false);
-    concatFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "concat", module.get());
+    m_runtime.concat = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "concat", module.get());
 }
 
 void Compiler::DeclareIntToStr()
@@ -2259,46 +2382,46 @@ void Compiler::DeclareIntToStr()
     llvm::Type* strTy = builder.getInt8Ty()->getPointerTo();
     llvm::FunctionType* funcType = llvm::FunctionType::get(strTy, { builder.getInt32Ty() }, false);
 
-    intToStrFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "int_to_string", module.get());
+    m_runtime.intToStr = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "int_to_string", module.get());
 }
 
 void Compiler::DeclareFree()
 {
     llvm::FunctionType* funcType = llvm::FunctionType::get(llvm::Type::getVoidTy(context), { builder.getInt8Ty()->getPointerTo() }, false);
-    freeFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "free", module.get());
+    m_runtime.free = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "free", module.get());
 }
 
 void Compiler::DeclarePrintf()
 {
     llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt32Ty(), { builder.getInt8Ty()->getPointerTo() }, true);
-    printfFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "printf", module.get());
+    m_runtime.printf = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "printf", module.get());
 }
 
 void Compiler::DeclareInputStrFunc()
 {
     llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt8Ty()->getPointerTo(), {}, false);
-    inputStrFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_str", module.get());
+    m_runtime.inputStr = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_str", module.get());
 }
 
 void Compiler::DeclareInputNumFunc()
 {
     llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
-    inputNumFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_num", module.get());
+    m_runtime.inputNum = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_num", module.get());
 }
 
 void Compiler::DeclareMalloc()
 {
     llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt8Ty()->getPointerTo(), { builder.getInt64Ty() }, false);
-    mallocFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "malloc", module.get());
+    m_runtime.malloc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "malloc", module.get());
 }
 
 void Compiler::RegisterBuiltins()
 {
-    m_builtins["free"] = std::make_unique<BuiltinFree>(freeFunc);
-    m_builtins["print"] = std::make_unique<BuiltinPrint>(printfFunc);
-    m_builtins["println"] = std::make_unique<BuiltinPrintln>(printfFunc);
-    m_builtins["input_str"] = std::make_unique<BuiltinInputStr>(inputStrFunc);
-    m_builtins["input_num"] = std::make_unique<BuiltinInputNum>(inputNumFunc);
+    m_builtins["free"] = std::make_unique<BuiltinFree>(m_runtime.free);
+    m_builtins["print"] = std::make_unique<BuiltinPrint>(m_runtime.printf);
+    m_builtins["println"] = std::make_unique<BuiltinPrintln>(m_runtime.printf);
+    m_builtins["input_str"] = std::make_unique<BuiltinInputStr>(m_runtime.inputStr);
+    m_builtins["input_num"] = std::make_unique<BuiltinInputNum>(m_runtime.inputNum);
 }
 
 void Compiler::RegisterConstants()
@@ -2322,7 +2445,7 @@ llvm::AllocaInst *Compiler::CreateEntryBlockAlloca(const std::string &name, llvm
 
 llvm::Value *Compiler::IntToString(llvm::Value *val)
 {
-    llvm::Value* intToStrVal = builder.CreateCall(intToStrFunc, { val }, "intStrTmp");
+    llvm::Value* intToStrVal = builder.CreateCall(m_runtime.intToStr, { val }, "intStrTmp");
     m_heapValues.insert(intToStrVal);
     return intToStrVal;
 }
@@ -2453,145 +2576,6 @@ void Compiler::InitializeTargetInfo()
     m_targetMachine.reset(target->createTargetMachine(llvm::Triple(targetTriple), "generic", "", opt, RM));
 
     module->setDataLayout(m_targetMachine->createDataLayout());
-}
-
-StructAbiInfo Compiler::ClassifyStructAbi(llvm::StructType *_struct)
-{
-    const llvm::DataLayout dl = module->getDataLayout();
-    uint64_t size = dl.getTypeAllocSize(_struct);
-    bool isWindows = llvm::Triple(module->getTargetTriple()).isOSWindows();
-
-    StructAbiInfo info;
-    info.size = size;
-
-    if (isWindows)
-    {
-        // Microsoft x64: ONLY exact 1/2/4/8-byte aggregates travel in a register (RCX/RDX/R8/R9 for args, RAX for return),
-        // as if they were an integer of that width. Every other size (3, 5, 6, 7, or >8 bytes) is always passed/returned by reference
-        if (size == 1 || size == 2 || size == 4 || size == 8)
-        {
-            info.kind = AbiPassKind::Direct;
-            info.coercedType = llvm::IntegerType::get(context, static_cast<unsigned>(size) * 8);
-        }
-        else
-            info.kind = AbiPassKind::Indirect;
-        
-        return info;
-    }
-
-    // System V x86-64: aggregates over two eightbytes (16 bytes) always go through memory
-    if (size > 16)
-    {
-        info.kind = AbiPassKind::Indirect;
-        return info;
-    }
-
-    // Classify each eightbyte as INTEGER or SSE by walking every scalar leaf field and the byte range it occupies
-    bool eightbyteHasField[2] = { false, true };
-    bool eightbyteIsSSE[2] = { true, true };
-
-    std::function<void(llvm::Type*, uint64_t)> walk = [&](llvm::Type* ty, uint64_t offset)
-    {
-        if (auto* nested = llvm::dyn_cast<llvm::StructType>(ty))
-        {
-            const llvm::StructLayout* sl = dl.getStructLayout(nested);
-            for (unsigned i = 0; i < nested->getNumElements(); ++i)
-                walk(nested->getElementType(i), offset + sl->getElementOffset(i));
-
-            return;
-        }
-
-        uint64_t fieldSize = dl.getTypeAllocSize(ty);
-        bool isSSE = ty->isFloatTy() || ty->isDoubleTy();
-
-        for (uint64_t b = offset; b < offset + fieldSize && b < 16; ++b)
-        {
-            int eb = static_cast<int>(b / 8);
-            eightbyteHasField[eb] = true;
-            if (!isSSE)
-                eightbyteHasField[eb] = false;
-        }
-    };
-
-    const llvm::StructLayout* topLayout = dl.getStructLayout(_struct);
-    for (unsigned i = 0; i < _struct->getNumElements(); ++i)
-        walk(_struct->getElementType(i), topLayout->getElementOffset(i));
-
-    int numEightbytes = (size <= 8) ? 1 : 2;
-
-    auto typeForEightbyte = [&](int idx) -> llvm::Type*
-    {
-        uint64_t remaining = size - static_cast<uint64_t>(idx) * 8;
-        uint64_t width = std::min<uint64_t>(remaining, 8);
-
-        if (eightbyteHasField[idx] && eightbyteIsSSE[idx])
-            return width <= 4 ? static_cast<llvm::Type*>(llvm::Type::getFloatTy(context))
-                               : static_cast<llvm::Type*>(llvm::Type::getDoubleTy(context));
-
-        unsigned bits = 8;
-        while (bits / 8 < width) bits *= 2;
-        return llvm::IntegerType::get(context, bits);
-    };
-
-    info.kind = AbiPassKind::Direct;
-    if (numEightbytes == 1)
-    {
-        info.coercedType = typeForEightbyte(0);
-    }
-    else
-    {
-        // Two-eightbyte structs are coerced to a literal {T1, T2} struct value and passed directly by value
-        info.coercedType = llvm::StructType::get(context, { typeForEightbyte(0), typeForEightbyte(1) });
-    }
-
-    return info;
-}
-
-llvm::Value *Compiler::CoerceStructForCall(llvm::Value *structPtr, const StructAbiInfo &abi)
-{
-    // Copy through a scratch alloca sized to the coerced type so the load below never reads past the source struct's real storage
-    llvm::AllocaInst* scratch = CreateEntryBlockAlloca("abiCoerce", abi.coercedType);
-    const llvm::DataLayout& dl = module->getDataLayout();
-    uint64_t copyBytes = std::min<uint64_t>(abi.size, dl.getTypeAllocSize(abi.coercedType));
-    builder.CreateMemCpy(scratch, scratch->getAlign(), structPtr, llvm::Align(1), copyBytes);
-    return builder.CreateLoad(abi.coercedType, scratch, "abiCoerced");
-}
-
-llvm::Value *Compiler::CoerceScalarForParam(llvm::Value *val, llvm::Type *paramTy)
-{
-    if (!val || val->getType() == paramTy)
-        return val;
-
-    llvm::Type* valTy = val->getType();
-
-    if (paramTy->isFloatingPointTy())
-    {
-        if (valTy->isIntegerTy())
-            return builder.CreateSIToFP(val, paramTy, "argIntToFp");
-        if (valTy->isDoubleTy() && paramTy->isFloatTy())
-            return builder.CreateFPTrunc(val, paramTy, "argFpTrunc");
-        if (valTy->isFloatTy() && paramTy->isDoubleTy())
-            return builder.CreateFPExt(val, paramTy, "argFpExt");
-    }
-    else if (paramTy->isIntegerTy() && valTy->isFloatingPointTy())
-    {
-        return builder.CreateFPToSI(val, paramTy, "argFpToInt");
-    }
-    else if (paramTy->isIntegerTy() && valTy->isIntegerTy() && valTy != paramTy)
-    {
-        if (valTy->getIntegerBitWidth() < paramTy->getIntegerBitWidth())
-            return builder.CreateSExt(val, paramTy, "argIntExt");
-        return builder.CreateTrunc(val, paramTy, "argIntTrunc");
-    }
-
-    return val;
-}
-
-llvm::Value *Compiler::DecoerceStructReturn(llvm::Value *coercedVal, llvm::StructType *structTy)
-{
-    llvm::AllocaInst* scratch = CreateEntryBlockAlloca("abiDecoerce", coercedVal->getType());
-    builder.CreateStore(coercedVal, scratch);
-    return builder.CreateLoad(structTy, scratch, "structResult");
 }
 
 std::string Compiler::DetectLinker()
