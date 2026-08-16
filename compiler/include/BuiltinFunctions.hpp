@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <cstdlib> 
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Value.h>
@@ -199,4 +200,116 @@ public:
     }
 
     std::string GetName() const override { return "<built-in function 'input_num'>"; }
+};
+
+class BuiltinClear : public BuiltinFunction
+{
+public:
+    BuiltinClear(llvm::Function* systemFunc, bool isWindows) : BuiltinFunction(systemFunc), m_isWindows(isWindows) {}
+
+    llvm::Value* Codegen(llvm::IRBuilder<>& builder, std::vector<llvm::Value*> args) override
+    {
+        if (!args.empty())
+        {
+            std::cerr << "clear expects 0 arguments\n";
+            return nullptr;
+        }
+
+        // resolved once at compile time from the target
+        llvm::Value* cmd = builder.CreateGlobalStringPtr(m_isWindows ? "cls" : "clear", "clearCmd");
+        return builder.CreateCall(func, { cmd });
+    }
+
+    std::string GetName() const override { return "<built-in function 'clear'>"; }
+
+private:
+    bool m_isWindows;
+};
+
+class BuiltinSystem : public BuiltinFunction
+{
+public:
+    using BuiltinFunction::BuiltinFunction;
+    llvm::Value* Codegen(llvm::IRBuilder<>& builder, std::vector<llvm::Value*> args) override
+    {
+        if (args.size() != 1)
+        {
+            std::cerr << "system expects 1 argument (a command string)\n";
+            return nullptr;
+        }
+
+        if (args[0]->getType() != builder.getInt8Ty()->getPointerTo())
+        {
+            std::cerr << "system expects a string (i8*)!\n";
+            return nullptr;
+        }
+
+        return builder.CreateCall(func, { args[0] });
+    }
+
+    std::string GetName() const override { return "<built-in function 'system'>"; }
+};
+
+// random()  -> double in [0, 1)
+// random(n) -> int in [0, n)
+class BuiltinRandom : public BuiltinFunction
+{
+public:
+    using BuiltinFunction::BuiltinFunction;
+    llvm::Value* Codegen(llvm::IRBuilder<>& builder, std::vector<llvm::Value*> args) override
+    {
+        if (args.size() > 1)
+        {
+            std::cerr << "random expects 0 or 1 arguments\n";
+            return nullptr;
+        }
+
+        llvm::Value* randVal = builder.CreateCall(func, {}, "randTmp"); // i32, libc rand()
+
+        if (args.empty())
+        {
+            llvm::Value* randD  = builder.CreateSIToFP(randVal, builder.getDoubleTy(), "randD");
+            llvm::Value* rangeD = llvm::ConstantFP::get(builder.getDoubleTy(), (double)RAND_MAX + 1.0);
+            return builder.CreateFDiv(randD, rangeD, "randNorm");
+        }
+
+        llvm::Value* n = args[0];
+        if (!n->getType()->isIntegerTy())
+        {
+            std::cerr << "random(n) expects an integer argument\n";
+            return nullptr;
+        }
+        if (n->getType() != builder.getInt32Ty())
+            n = builder.CreateIntCast(n, builder.getInt32Ty(), true, "randRange");
+
+        return builder.CreateSRem(randVal, n, "randInt");
+    }
+
+    std::string GetName() const override { return "<built-in function 'random'>"; }
+};
+
+// randomize() -> srand(time(NULL))
+class BuiltinRandomize : public BuiltinFunction
+{
+public:
+    BuiltinRandomize(llvm::Function* srandFunc, llvm::Function* timeFunc) : BuiltinFunction(srandFunc), m_timeFunc(timeFunc) {}
+
+    llvm::Value* Codegen(llvm::IRBuilder<>& builder, std::vector<llvm::Value*> args) override
+    {
+        if (!args.empty())
+        {
+            std::cerr << "randomize expects 0 arguments\n";
+            return nullptr;
+        }
+
+        llvm::Value* nullTimePtr = llvm::ConstantPointerNull::get(builder.getInt64Ty()->getPointerTo());
+        llvm::Value* now  = builder.CreateCall(m_timeFunc, { nullTimePtr }, "nowTmp");
+        llvm::Value* seed = builder.CreateTrunc(now, builder.getInt32Ty(), "seed");
+        return builder.CreateCall(func, { seed });
+    }
+
+    std::string GetName() const override { return "<built-in function 'randomize'>"; }
+
+private:
+    llvm::Function* m_timeFunc;
 };

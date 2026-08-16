@@ -263,6 +263,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
     }
 
     llvm::AllocaInst* alloca = nullptr;
+    llvm::AllocaInst* lengthAlloca = nullptr; // dyn arrays only
     bool isHeap = info.isDynamic;
 
     if (existingIsArray)
@@ -290,6 +291,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
         {
             // dyn array: free the old heap buffer, malloc a fresh one, rebind the pointer
             alloca = existing->alloca;
+            lengthAlloca = oldInfo.lengthAlloca; // reuse
 
             llvm::Value* oldBase = builder.CreateLoad(llvm::PointerType::get(info.elementType, 0), alloca, name);
             llvm::Value* oldRaw = builder.CreateBitCast(oldBase, builder.getInt8Ty()->getPointerTo(), name + "OldRaw");
@@ -319,6 +321,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
 
         alloca = CreateEntryBlockAlloca(name, llvm::PointerType::get(info.elementType, 0));
         builder.CreateStore(basePtr, alloca);
+        lengthAlloca = CreateEntryBlockAlloca(name + "Len", builder.getInt32Ty());
 
         m_heapValues.insert(basePtr);
     }
@@ -342,10 +345,13 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
         builder.CreateStore(elemVal, elemPtr);
     }
 
+    if (info.isDynamic)
+        builder.CreateStore(llvm::ConstantInt::get(builder.getInt32Ty(), (uint64_t)length), lengthAlloca);
+
     if (!existingIsArray)
         SetVariable(name, { alloca, isHeap });
 
-    m_arrays[name] = { info.elementType, info.isDynamic, length };
+    m_arrays[name] = { info.elementType, info.isDynamic, length, lengthAlloca };
 
     return alloca;
 }
@@ -1527,6 +1533,9 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         auto modIt = m_modules.find(namespaceName);
         if (modIt == m_modules.end())
         {
+            if (FindVariable(namespaceName))
+                return Compile_MemberCall(namespaceName, name, node);
+
             std::cerr << "Function calling in seperate Module error: Module '" << namespaceName << "' not found\n";
             return nullptr;
         }
@@ -1681,6 +1690,50 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         return builder.CreateLoad(sretTy, sretAlloca, "structResult");
     }
     return call;
+}
+
+llvm::Value *Compiler::Compile_MemberCall(const std::string &ownerName, const std::string &methodName, CallNode *node)
+{
+    VarInfo* var = FindVariable(ownerName);
+    if (!var)
+    {
+        std::cerr << "Member method call error: '" << ownerName << "' is not a known variable, module, or linked library\n";
+        return nullptr;
+    }
+
+    MemberCallContext ctx;
+    ctx.ownerName = ownerName;
+    ctx.ownerVar = var;
+    ctx.node = node;
+
+    auto arrIt = m_arrays.find(ownerName);
+    if (arrIt != m_arrays.end())
+    {
+        ctx.typeName = "array";
+        ctx.arrayInfo = &arrIt->second;
+    }
+    else if (m_structs.IsStructVar(ownerName))
+    {
+        ctx.typeName = m_structs.varToType.at(ownerName);
+    }
+    else if (var->alloca->getAllocatedType()->isPointerTy())
+    {
+        ctx.typeName = "string";
+    }
+    else
+    {
+        std::cerr << "Member method call error: '" << ownerName << "' has no method '" << methodName << "'\n";
+        return nullptr;
+    }
+
+    auto methodIt = m_memberMethods.find(ctx.typeName + "::" + methodName);
+    if (methodIt == m_memberMethods.end())
+    {
+        std::cerr << "Member method call error: '" << ctx.typeName << "' has no method '" << methodName << "'\n";
+        return nullptr;
+    }
+
+    return methodIt->second(*this, ctx);
 }
 
 llvm::Value *Compiler::Compile_ReturnNode(ReturnNode *node)
@@ -2029,6 +2082,11 @@ void Compiler::SetVariable(const std::string &name, VarInfo info)
     m_scopes.back()[name] = info;
 }
 
+void Compiler::RegisterMemberMethod(const std::string &typeName, const std::string &methodName, MethodFunc func)
+{
+    m_memberMethods[typeName + "::" + methodName] = std::move(func);
+}
+
 std::unordered_map<std::string, VarInfo> Compiler::CollectAllVariables() const
 {
     std::unordered_map<std::string, VarInfo> result;
@@ -2368,60 +2426,46 @@ llvm::Type *Compiler::InferenceReturnTypeBlock(std::shared_ptr<Node> node, Local
     return builder.getInt32Ty();
 }
 
-void Compiler::DeclareConcat()
+llvm::Function *Compiler::DeclareExternalFunction(const std::string &symbolName, llvm::Type *returnType, std::vector<llvm::Type *> paramTypes, bool isVarArg)
 {
-    llvm::Type* strTy = builder.getInt8Ty()->getPointerTo();
-    std::vector<llvm::Type*> args = { strTy, strTy };
-
-    llvm::FunctionType* funcType = llvm::FunctionType::get(strTy, args, false);
-    m_runtime.concat = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "concat", module.get());
+    llvm::FunctionType* funcType = llvm::FunctionType::get(returnType, paramTypes, isVarArg);
+    return llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, symbolName, module.get());
 }
 
-void Compiler::DeclareIntToStr()
+void Compiler::DeclareRuntimeFunctions()
 {
-    llvm::Type* strTy = builder.getInt8Ty()->getPointerTo();
-    llvm::FunctionType* funcType = llvm::FunctionType::get(strTy, { builder.getInt32Ty() }, false);
+    llvm::Type* i8p    = builder.getInt8Ty()->getPointerTo();
+    llvm::Type* i32    = builder.getInt32Ty();
+    llvm::Type* i64    = builder.getInt64Ty();
+    llvm::Type* voidTy = llvm::Type::getVoidTy(context);
 
-    m_runtime.intToStr = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "int_to_string", module.get());
+    m_runtime.concat = DeclareExternalFunction("concat", i8p, { i8p, i8p });
+    m_runtime.intToStr = DeclareExternalFunction("int_to_string", i8p, { i32 });
+    m_runtime.free = DeclareExternalFunction("free", voidTy, { i8p });
+    m_runtime.printf = DeclareExternalFunction("printf", i32, { i8p }, true);
+    m_runtime.inputStr = DeclareExternalFunction("input_str", i8p, {});
+    m_runtime.inputNum = DeclareExternalFunction("input_num", i32, {});
+    m_runtime.malloc = DeclareExternalFunction("malloc", i8p, { i64 });
+    m_runtime.strlen = DeclareExternalFunction("strlen", i64, { i8p });
+    m_runtime.system = DeclareExternalFunction("system", i32, { i8p });
+    m_runtime.random = DeclareExternalFunction("rand", i32, {});
+    m_runtime.randomize = DeclareExternalFunction("srand", voidTy, { i32 });
+    m_runtime.time = DeclareExternalFunction("time", i64, { i64->getPointerTo() });
 }
 
-void Compiler::DeclareFree()
+void Compiler::RegisterBuiltinMethods()
 {
-    llvm::FunctionType* funcType = llvm::FunctionType::get(llvm::Type::getVoidTy(context), { builder.getInt8Ty()->getPointerTo() }, false);
-    m_runtime.free = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "free", module.get());
-}
+    bool isWindows = llvm::Triple(module->getTargetTriple()).isOSWindows();
 
-void Compiler::DeclarePrintf()
-{
-    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt32Ty(), { builder.getInt8Ty()->getPointerTo() }, true);
-    m_runtime.printf = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "printf", module.get());
-}
-
-void Compiler::DeclareInputStrFunc()
-{
-    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt8Ty()->getPointerTo(), {}, false);
-    m_runtime.inputStr = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_str", module.get());
-}
-
-void Compiler::DeclareInputNumFunc()
-{
-    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt32Ty(), {}, false);
-    m_runtime.inputNum = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "input_num", module.get());
-}
-
-void Compiler::DeclareMalloc()
-{
-    llvm::FunctionType* funcType = llvm::FunctionType::get(builder.getInt8Ty()->getPointerTo(), { builder.getInt64Ty() }, false);
-    m_runtime.malloc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "malloc", module.get());
-}
-
-void Compiler::RegisterBuiltins()
-{
     m_builtins["free"] = std::make_unique<BuiltinFree>(m_runtime.free);
     m_builtins["print"] = std::make_unique<BuiltinPrint>(m_runtime.printf);
     m_builtins["println"] = std::make_unique<BuiltinPrintln>(m_runtime.printf);
     m_builtins["input_str"] = std::make_unique<BuiltinInputStr>(m_runtime.inputStr);
     m_builtins["input_num"] = std::make_unique<BuiltinInputNum>(m_runtime.inputNum);
+    m_builtins["clear"] = std::make_unique<BuiltinClear>(m_runtime.system, isWindows);
+    m_builtins["system"] = std::make_unique<BuiltinSystem>(m_runtime.system);
+    m_builtins["random"] = std::make_unique<BuiltinRandom>(m_runtime.random);
+    m_builtins["randomize"] = std::make_unique<BuiltinRandomize>(m_runtime.randomize, m_runtime.time);
 }
 
 void Compiler::RegisterConstants()
@@ -2432,6 +2476,194 @@ void Compiler::RegisterConstants()
     m_constants["null"] = llvm::ConstantPointerNull::get(llvm::PointerType::get(builder.getInt8Ty(), 0));
 
     m_constants["math_pi"] = llvm::ConstantFP::get(builder.getDoubleTy(), 3.141592653589793);
+}
+
+void Compiler::RegisterBuiltinMemberMethods()
+{
+    // string::length()
+    RegisterMemberMethod("string", "length", [](Compiler& c, MemberCallContext& ctx) -> llvm::Value*
+    {
+        if (!ctx.node->GetArgNodes().empty())
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::length()' takes no arguments\n";
+            return nullptr;
+        }
+        llvm::Value* strVal = c.builder.CreateLoad(ctx.ownerVar->alloca->getAllocatedType(), ctx.ownerVar->alloca, ctx.ownerName);
+        llvm::Value* len64 = c.builder.CreateCall(c.m_runtime.strlen, { strVal }, ctx.ownerName + "Len");
+        return c.builder.CreateTrunc(len64, c.builder.getInt32Ty(), ctx.ownerName + "LenI32");
+    });
+
+    // arr::length() fixed arrays: compile-time constant | dyn arrays: read the runtime counter
+    RegisterMemberMethod("array", "length", [](Compiler& c, MemberCallContext& ctx) -> llvm::Value*
+    {
+        if (!ctx.node->GetArgNodes().empty())
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::length()' takes no arguments\n";
+            return nullptr;
+        }
+
+        if (ctx.arrayInfo->isDynamic)
+            return c.builder.CreateLoad(c.builder.getInt32Ty(), ctx.arrayInfo->lengthAlloca, ctx.ownerName + "Len");
+
+        return llvm::ConstantInt::get(c.builder.getInt32Ty(), (uint64_t)ctx.arrayInfo->length);
+    });
+
+    // arr::append(x) dyn arrays: Reallocs to exactly (length+1) elements each call
+    RegisterMemberMethod("array", "append", [](Compiler& c, MemberCallContext& ctx) -> llvm::Value*
+    {
+        if (!ctx.arrayInfo->isDynamic)
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::append()' -> cannot append to a fixed-size array\n";
+            return nullptr;
+        }
+        if (ctx.node->GetArgNodes().size() != 1)
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::append()' -> expects 1 argument\n";
+            return nullptr;
+        }
+
+        llvm::Type* elemTy = ctx.arrayInfo->elementType;
+        llvm::Value* newElem = c.CompileNode(ctx.node->GetArgNodes()[0]);
+        if (!newElem)
+            return nullptr;
+        if (newElem->getType() != elemTy && newElem->getType()->isIntegerTy() && elemTy->isIntegerTy())
+            newElem = c.builder.CreateIntCast(newElem, elemTy, true, "appendElemCast");
+        if (newElem->getType() != elemTy)
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::append()' -> element type mismatch\n";
+            return nullptr;
+        }
+
+        const llvm::DataLayout& dl = c.module->getDataLayout();
+        llvm::Constant* elemSize = llvm::ConstantInt::get(c.builder.getInt64Ty(), dl.getTypeAllocSize(elemTy));
+
+        llvm::Value* curLen   = c.builder.CreateLoad(c.builder.getInt32Ty(), ctx.arrayInfo->lengthAlloca, ctx.ownerName + "Len");
+        llvm::Value* newLen   = c.builder.CreateAdd(curLen, c.builder.getInt32(1), ctx.ownerName + "NewLen");
+        llvm::Value* curLen64 = c.builder.CreateZExt(curLen, c.builder.getInt64Ty());
+        llvm::Value* newLen64 = c.builder.CreateZExt(newLen, c.builder.getInt64Ty());
+
+        llvm::Value* newRaw  = c.builder.CreateCall(c.m_runtime.malloc, { c.builder.CreateMul(newLen64, elemSize) }, ctx.ownerName + "Raw");
+        llvm::Value* newBase = c.builder.CreateBitCast(newRaw, llvm::PointerType::get(elemTy, 0), ctx.ownerName + "Ptr");
+        llvm::Value* oldBase = c.builder.CreateLoad(llvm::PointerType::get(elemTy, 0), ctx.ownerVar->alloca, ctx.ownerName);
+
+        llvm::Align align(dl.getABITypeAlign(elemTy));
+        c.builder.CreateMemCpy(newBase, align, oldBase, align, c.builder.CreateMul(curLen64, elemSize));
+
+        llvm::Value* elemPtr = c.builder.CreateGEP(elemTy, newBase, curLen, ctx.ownerName + "AppendPtr");
+        c.builder.CreateStore(newElem, elemPtr);
+
+        llvm::Value* oldRaw = c.builder.CreateBitCast(oldBase, c.builder.getInt8Ty()->getPointerTo(), ctx.ownerName + "OldRaw");
+        c.builder.CreateCall(c.m_runtime.free, { oldRaw });
+        c.m_heapValues.erase(oldBase);
+        c.m_heapValues.insert(newBase);
+
+        c.builder.CreateStore(newBase, ctx.ownerVar->alloca);
+        c.builder.CreateStore(newLen, ctx.arrayInfo->lengthAlloca);
+
+        return newLen;
+    });
+
+    // arr::pop() dyn arrays: Removes and returns the last element
+    RegisterMemberMethod("array", "pop", [](Compiler& c, MemberCallContext& ctx) -> llvm::Value*
+    {
+        if (!ctx.arrayInfo->isDynamic)
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::pop()' -> cannot pop from a fixed-size array\n";
+            return nullptr;
+        }
+        if (!ctx.node->GetArgNodes().empty())
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::pop()' -> takes no arguments\n";
+            return nullptr;
+        }
+
+        llvm::Type* elemTy = ctx.arrayInfo->elementType;
+        llvm::Value* curLen = c.builder.CreateLoad(c.builder.getInt32Ty(), ctx.arrayInfo->lengthAlloca, ctx.ownerName + "Len");
+        llvm::Value* newLen = c.builder.CreateSub(curLen, c.builder.getInt32(1), ctx.ownerName + "NewLen");
+
+        llvm::Value* base = c.builder.CreateLoad(llvm::PointerType::get(elemTy, 0), ctx.ownerVar->alloca, ctx.ownerName);
+        llvm::Value* elemPtr = c.builder.CreateGEP(elemTy, base, newLen, ctx.ownerName + "PopPtr");
+        llvm::Value* popped = c.builder.CreateLoad(elemTy, elemPtr, ctx.ownerName + "Popped");
+
+        c.builder.CreateStore(newLen, ctx.arrayInfo->lengthAlloca);
+
+        return popped;
+    });
+
+    // arr::extend(other) dyn arrays only. `other` must be another array variable of the same element type (fixed/dyn)
+    // Returns the new length
+    RegisterMemberMethod("array", "extend", [](Compiler& c, MemberCallContext& ctx) -> llvm::Value*
+    {
+        if (!ctx.arrayInfo->isDynamic)
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::extend()' -> cannot extend a fixed-size array\n";
+            return nullptr;
+        }
+        if (ctx.node->GetArgNodes().size() != 1)
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::extend()' -> expects 1 argument (another array)\n";
+            return nullptr;
+        }
+
+        auto* otherVA = dynamic_cast<VarAccessNode*>(ctx.node->GetArgNodes()[0].get());
+        if (!otherVA || otherVA->GetIsNamespaced())
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::extend()' -> argument must be another array variable\n";
+            return nullptr;
+        }
+        std::string otherName = std::get<std::string>(otherVA->GetVarNameToken().GetValue());
+
+        VarInfo* otherVar = c.FindVariable(otherName);
+        auto otherIt = c.m_arrays.find(otherName);
+        if (!otherVar || otherIt == c.m_arrays.end())
+        {
+            std::cerr << "Method error: '" << otherName << "' is not a known array variable\n";
+            return nullptr;
+        }
+
+        ArrayInfo& otherInfo = otherIt->second;
+        llvm::Type* elemTy = ctx.arrayInfo->elementType;
+        if (otherInfo.elementType != elemTy)
+        {
+            std::cerr << "Method error: '" << ctx.ownerName << "::extend()' -> element type mismatch with '" << otherName << "'\n";
+            return nullptr;
+        }
+
+        const llvm::DataLayout& dl = c.module->getDataLayout();
+        llvm::Constant* elemSize = llvm::ConstantInt::get(c.builder.getInt64Ty(), dl.getTypeAllocSize(elemTy));
+        llvm::Align align(dl.getABITypeAlign(elemTy));
+
+        llvm::Value* curLen = c.builder.CreateLoad(c.builder.getInt32Ty(), ctx.arrayInfo->lengthAlloca, ctx.ownerName + "Len");
+        llvm::Value* otherLen = otherInfo.isDynamic
+            ? static_cast<llvm::Value*>(c.builder.CreateLoad(c.builder.getInt32Ty(), otherInfo.lengthAlloca, otherName + "Len"))
+            : static_cast<llvm::Value*>(llvm::ConstantInt::get(c.builder.getInt32Ty(), (uint64_t)otherInfo.length));
+
+        llvm::Value* newLen = c.builder.CreateAdd(curLen, otherLen, ctx.ownerName + "NewLen");
+        llvm::Value* curLen64   = c.builder.CreateZExt(curLen, c.builder.getInt64Ty());
+        llvm::Value* otherLen64 = c.builder.CreateZExt(otherLen, c.builder.getInt64Ty());
+        llvm::Value* newLen64   = c.builder.CreateZExt(newLen, c.builder.getInt64Ty());
+
+        llvm::Value* newRaw  = c.builder.CreateCall(c.m_runtime.malloc, { c.builder.CreateMul(newLen64, elemSize) }, ctx.ownerName + "Raw");
+        llvm::Value* newBase = c.builder.CreateBitCast(newRaw, llvm::PointerType::get(elemTy, 0), ctx.ownerName + "Ptr");
+        llvm::Value* oldBase = c.builder.CreateLoad(llvm::PointerType::get(elemTy, 0), ctx.ownerVar->alloca, ctx.ownerName);
+
+        c.builder.CreateMemCpy(newBase, align, oldBase, align, c.builder.CreateMul(curLen64, elemSize));
+
+        llvm::Value* otherBase = c.GetArrayElementPtr(otherVar->alloca, elemTy, otherInfo.length, otherInfo.isDynamic,
+                                                        c.builder.getInt32(0), otherName);
+        llvm::Value* destPtr = c.builder.CreateGEP(elemTy, newBase, curLen, ctx.ownerName + "ExtendDestPtr");
+        c.builder.CreateMemCpy(destPtr, align, otherBase, align, c.builder.CreateMul(otherLen64, elemSize));
+
+        llvm::Value* oldRaw = c.builder.CreateBitCast(oldBase, c.builder.getInt8Ty()->getPointerTo(), ctx.ownerName + "OldRaw");
+        c.builder.CreateCall(c.m_runtime.free, { oldRaw });
+        c.m_heapValues.erase(oldBase);
+        c.m_heapValues.insert(newBase);
+
+        c.builder.CreateStore(newBase, ctx.ownerVar->alloca);
+        c.builder.CreateStore(newLen, ctx.arrayInfo->lengthAlloca);
+
+        return newLen;
+    });
 }
 
 llvm::AllocaInst *Compiler::CreateEntryBlockAlloca(const std::string &name, llvm::Type *type)
