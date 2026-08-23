@@ -122,7 +122,7 @@ class Compiler
 {
 using MethodFunc = std::function<llvm::Value*(Compiler&, MemberCallContext&)>;
 public:
-    Compiler() : builder(context), m_abi(context, builder, *(module = std::make_unique<llvm::Module>("main_module", context)))
+    Compiler(bool bareMetal = false) : builder(context), m_bareMetal(bareMetal), m_abi(context, builder, *(module = std::make_unique<llvm::Module>("main_module", context)))
     {
         InitializeTargetInfo();
 
@@ -137,7 +137,7 @@ public:
 
     void GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR);
     void EmitObjectFile(const std::string& filename);
-    void LinkObjectFile(const std::string& filepath);
+    void LinkObjectFile(const std::string& filepath, const std::string& filename);
 
 private:
     std::string m_mainFilepath; 
@@ -163,6 +163,8 @@ private:
     std::unordered_map<std::string, ProgramModule> m_modules; // keyed by # module alias
 
     RuntimeFunctions m_runtime;
+
+    bool m_bareMetal = false;
 
 private:
     llvm::Value* CompileNode(std::shared_ptr<Node> node);
@@ -221,7 +223,6 @@ private:
     llvm::Value* IntToString(llvm::Value* val);
     llvm::Type* StringToLLVMType(const std::string& typeName);
     std::optional<ArrayTypeInfo> ParseArrayTypeName(const std::string &typeName);
-    llvm::Value* Compile_FormatArrayValue(const std::string& ownerName, VarInfo& ownerVar, ArrayInfo& arrInfo);
     llvm::Value* CreateFormatString(const std::string& fmt);
     llvm::Value* GetArrayElementPtr(llvm::AllocaInst* alloca, llvm::Type* elementType, int length, bool isDynamic, llvm::Value* indexVal, const std::string& name);
 

@@ -19,6 +19,11 @@ struct StructAttributeToken
 	std::string attributeName;
 };
 
+struct FuncAttribute
+{
+	std::string name;
+	std::optional<std::string> arg;
+};
 
 class Node
 {
@@ -219,11 +224,16 @@ public:
 	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
 	bool GetShouldAutoReturn() const { return shouldAutoReturn; }
 
+	void SetAttributes(std::vector<FuncAttribute> attrs) { attributes = std::move(attrs); }
+	const std::vector<FuncAttribute>& GetAttributes() const { return attributes; }
+
 private:
 	std::optional<Token> varNameTok;
 	std::vector<ArgNameToken> argNameToks;
 	std::shared_ptr<Node> bodyNode;
 	bool shouldAutoReturn;
+
+	std::vector<FuncAttribute> attributes;
 };
 
 class CallNode : public Node

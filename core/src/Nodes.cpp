@@ -188,7 +188,8 @@ FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<ArgNameTok
 	else
 		posStart = bodyNode->GetPosStart();
 
-	posEnd = bodyNode->GetPosEnd();
+	if (bodyNode != nullptr)
+		posEnd = bodyNode->GetPosEnd();
 }
 
 std::string FuncDefNode::Repr()

@@ -137,6 +137,36 @@ ParseResult Parser::Statement()
 		return res.Success(std::make_unique<BreakNode>(posStart, currentToken.GetPosEnd().Copy()));
 	}
 
+	if (currentToken.GetType() == TT_LSQUARE)
+	{
+	    ParseResult attrRes = AttributeList();
+
+	    // skip newlines between "]" and the func/struct keyword
+	    while (!attrRes.HasError() && currentToken.GetType() == TT_NEWLINE)
+	    {
+	        Advance();
+	        attrRes.RegisterAdvancement();
+	    }
+
+	    if (!attrRes.HasError() && (currentToken.Matches(TT_KEYWORD, "func") || currentToken.Matches(TT_KEYWORD, "struct")))
+	    {
+	        std::shared_ptr<Node> def = res.Register(currentToken.Matches(TT_KEYWORD, "func") ? FuncDef() : StructDef());
+	        if (res.HasError())
+	            return res;
+
+	        if (auto* func = dynamic_cast<FuncDefNode*>(def.get()))
+	            func->SetAttributes(m_pendingAttributes);
+
+	        // ToDo: Extend struct def to also take in attributes
+
+	        m_pendingAttributes.clear();
+	        return res.Success(def);
+	    }
+
+	    // wasn't attributes, reverse everything and fall through
+	    Reverse(attrRes.GetAdvancementCount());
+	}
+
 	if (currentToken.GetType() == TT_HASH)
 	{
 		std::shared_ptr<Node> importStatement = res.Register(ModuleExternLinkStatement());
@@ -1155,8 +1185,9 @@ ParseResult Parser::FuncDef()
 	Advance();
 	res.RegisterAdvancement();
 
-	std::shared_ptr<Node> body = res.Register(Statements());
-	if (res.HasError())
+	std::optional<std::shared_ptr<Node>> body = std::nullopt;
+	body = res.TryRegister(Statements());
+	if (body.has_value() && res.HasError())
 		return res;
 
 	if (currentToken.GetType() != TT_RCURLYBRACKET)
@@ -1165,7 +1196,7 @@ ParseResult Parser::FuncDef()
 	Advance();
 	res.RegisterAdvancement();
 
-	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, body, false));
+	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, body.has_value() ? body.value() : nullptr, false));
 }
 
 ParseResult Parser::StructDef()
@@ -1232,6 +1263,65 @@ ParseResult Parser::StructDef()
 	res.RegisterAdvancement();
 
 	return res.Success(std::make_shared<StructDefNode>(varNameTok, attributeToks));
+}
+
+ParseResult Parser::AttributeList()
+{
+    ParseResult res;
+    std::vector<FuncAttribute> attrs;
+
+    Advance();
+    res.RegisterAdvancement();
+
+    auto parseOne = [&]() -> bool
+    {
+        if (currentToken.GetType() != TT_IDENTIFIER)
+            return false;
+
+        std::string attrName = std::get<std::string>(currentToken.GetValue());
+        Advance();
+        res.RegisterAdvancement();
+
+        std::optional<std::string> arg;
+        if (currentToken.GetType() == TT_LPAREN)
+        {
+            Advance();
+            res.RegisterAdvancement();
+
+            if (currentToken.GetType() != TT_STRING)
+                return false;
+            arg = std::get<std::string>(currentToken.GetValue());
+            Advance();
+            res.RegisterAdvancement();
+
+            if (currentToken.GetType() != TT_RPAREN)
+                return false;
+            Advance();
+            res.RegisterAdvancement();
+        }
+
+        attrs.push_back({ attrName, arg });
+        return true;
+    };
+
+    if (!parseOne())
+        return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected attribute name"));
+
+    while (currentToken.GetType() == TT_COMMA)
+    {
+        Advance();
+        res.RegisterAdvancement();
+        if (!parseOne())
+            return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected attribute name"));
+    }
+
+    if (currentToken.GetType() != TT_RSQUARE)
+        return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']'"));
+    Advance();
+    res.RegisterAdvancement();
+
+    m_pendingAttributes = attrs;
+    return res.Success(nullptr);
 }
 
 ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b)

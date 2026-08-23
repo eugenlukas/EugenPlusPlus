@@ -54,8 +54,14 @@ void Compiler::EmitObjectFile(const std::string& filename)
     dest.flush();
 }
 
-void Compiler::LinkObjectFile(const std::string &filepath)
+void Compiler::LinkObjectFile(const std::string &filepath, const std::string& filename)
 {
+    if (m_bareMetal)
+    {
+        std::cerr << "Bare-metal mode: skipping automatic link, run your linker script manually.\n";
+        return;
+    }
+
     std::string linker = DetectLinker();
 
     if (linker.empty())
@@ -74,7 +80,7 @@ void Compiler::LinkObjectFile(const std::string &filepath)
 
     std::string cmd =
         linker + " " +
-        filepath + "output.o " +
+        filepath + filename + ".o " +
         "-L\"" + libPath + "\" " +
         "-lruntime ";
     
@@ -368,10 +374,9 @@ llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
     std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
 
     VarInfo* var = FindVariable(name);
-    auto arrIt = m_arrays.find(name);
-    if (!var || arrIt == m_arrays.end())
+    if (!var)
     {
-        std::cerr << "Index access error: '" << name << "' is not a known array variable\n";
+        std::cerr << "Index access error: '" << name << "' is not a know variable\n";
         return nullptr;
     }
 
@@ -379,10 +384,32 @@ llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
     if (!indexVal)
         return nullptr;
 
-    const ArrayInfo& info = arrIt->second;
-    llvm::Value* elemPtr = GetArrayElementPtr(var->alloca, info.elementType, info.length, info.isDynamic, indexVal, name);
+    // array element access
+    auto arrIt = m_arrays.find(name);
+    if (arrIt != m_arrays.end())
+    {
+        const ArrayInfo& info = arrIt->second;
+        llvm::Value* elemPtr = GetArrayElementPtr(var->alloca, info.elementType, info.length, info.isDynamic, indexVal, name);
+        return builder.CreateLoad(info.elementType, elemPtr, name + "Elem");
+    }
 
-    return builder.CreateLoad(info.elementType, elemPtr, name + "Elem");
+    // string character access
+    if (var->alloca->getAllocatedType() == builder.getInt8Ty()->getPointerTo() && !m_structs.IsStructVar(name))
+    {
+        llvm::Value* strVal = builder.CreateLoad(builder.getInt8Ty()->getPointerTo(), var->alloca, name);
+        llvm::Value* charPtr = builder.CreateGEP(builder.getInt8Ty(), strVal, indexVal, name + "CharPtr");
+        llvm::Value* charVal = builder.CreateLoad(builder.getInt8Ty(), charPtr, name + "Char");
+
+        llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { builder.getInt64(2) }, name + "CharStrRaw");
+        builder.CreateStore(charVal, raw);
+        llvm::Value* nulPtr = builder.CreateGEP(builder.getInt8Ty(), raw, builder.getInt32(1));
+        builder.CreateStore(builder.getInt8(0), nulPtr);
+
+        return raw;
+    }
+
+    std::cerr << "Index access error: '" << name << "' is not a known array or string variable\n";
+    return nullptr;
 }
 
 llvm::Value *Compiler::Compile_IndexAssignNode(IndexAssignNode *node)
@@ -400,7 +427,10 @@ llvm::Value *Compiler::Compile_IndexAssignNode(IndexAssignNode *node)
     auto arrIt = m_arrays.find(name);
     if (!var || arrIt == m_arrays.end())
     {
-        std::cerr << "Index assignment error: '" << name << "' is not a known array variable\n";
+        if (var && var->alloca->getAllocatedType() == builder.getInt8Ty()->getPointerTo() && !m_structs.IsStructVar(name))
+            std::cerr << "Index assignment error: '" << name << "' is a string, individual characters can't be assigned\n";
+        else
+            std::cerr << "Index assignment error: '" << name << "' is not a known array variable\n";
         return nullptr;
     }
 
@@ -1329,6 +1359,27 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     llvm::FunctionType* funcType = llvm::FunctionType::get(llvmReturnType, argTypes, false);
     llvm::Function* func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, name, module.get());
 
+    // Handle bare-metal
+    if (m_bareMetal)
+    {
+        func->addFnAttr(llvm::Attribute::NoImplicitFloat);
+        func->addFnAttr(llvm::Attribute::NoRedZone);
+    }
+
+    // Handle function attributes
+    for (const auto& attr : node->GetAttributes())
+    {
+        if (attr.name == "cdecl")
+        {
+            func->setCallingConv(llvm::CallingConv::C);
+            func->setLinkage(llvm::GlobalValue::ExternalLinkage);
+            if (attr.arg.has_value())
+                func->setName(attr.arg.value());
+        }
+        else
+            std::cerr << "Warning: unknow function attribute '" << attr.name << "'\n";
+    }
+
     if (structReturnStructTy)
         func->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, structReturnStructTy));
 
@@ -1384,7 +1435,11 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     }
 
     // Compile body
-    llvm::Value* retVal = CompileNode(node->GetBodyNode());
+    llvm::Value* retVal = nullptr;
+    if (node->GetBodyNode() != nullptr)
+        retVal = CompileNode(node->GetBodyNode());
+    else
+        std::cout << "Warning: func '" << name << "' has no body\n";
 
     // Free all localy created heap values at end of function
     FreeLocalHeapValues();
@@ -2434,6 +2489,9 @@ llvm::Function *Compiler::DeclareExternalFunction(const std::string &symbolName,
 
 void Compiler::DeclareRuntimeFunctions()
 {
+    if (m_bareMetal)
+        return; // because of no libc
+
     llvm::Type* i8p    = builder.getInt8Ty()->getPointerTo();
     llvm::Type* i32    = builder.getInt32Ty();
     llvm::Type* i64    = builder.getInt64Ty();
@@ -2455,6 +2513,9 @@ void Compiler::DeclareRuntimeFunctions()
 
 void Compiler::RegisterBuiltinMethods()
 {
+    if (m_bareMetal)
+        return; // because they require libc
+
     bool isWindows = llvm::Triple(module->getTargetTriple()).isOSWindows();
 
     m_builtins["free"] = std::make_unique<BuiltinFree>(m_runtime.free);
@@ -2793,6 +2854,13 @@ void Compiler::InitializeTargetInfo()
     llvm::InitializeNativeTargetAsmPrinter();
 
     std::string targetTriple = llvm::sys::getDefaultTargetTriple();
+    if (m_bareMetal)
+    {
+        llvm::Triple triple(targetTriple);
+        triple.setOS(llvm::Triple::UnknownOS);
+        triple.setEnvironment(llvm::Triple::UnknownEnvironment);
+        targetTriple = triple.str();
+    }
     module->setTargetTriple(llvm::Triple(targetTriple));
 
     std::string error;
@@ -2804,9 +2872,14 @@ void Compiler::InitializeTargetInfo()
     }
 
     llvm::TargetOptions opt;
-    auto RM = std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_);
-    m_targetMachine.reset(target->createTargetMachine(llvm::Triple(targetTriple), "generic", "", opt, RM));
+    auto RM = m_bareMetal   ? std::optional<llvm::Reloc::Model>(llvm::Reloc::Static)
+                            : std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_);
+    auto CM = m_bareMetal   ? std::optional<llvm::CodeModel::Model>(llvm::CodeModel::Kernel) : std::nullopt;
 
+    std::string features = m_bareMetal  ? "-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2,-mmx"
+                                        : "";
+
+    m_targetMachine.reset(target->createTargetMachine(llvm::Triple(targetTriple), "generic", features, opt, RM, CM));
     module->setDataLayout(m_targetMachine->createDataLayout());
 }
 

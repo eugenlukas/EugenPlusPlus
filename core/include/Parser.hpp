@@ -102,12 +102,14 @@ public:
 	ParseResult WhileExpr();
 	ParseResult FuncDef();
 	ParseResult StructDef();
+	ParseResult AttributeList();
 
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b = nullptr);
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::pair<std::string, std::string>> typeValueOps, std::function<ParseResult()> func_b = nullptr);
 
 private:
 	std::vector<Token> tokens;
+	std::vector<FuncAttribute> m_pendingAttributes;
 	int tokIdx = -1;
 	Token currentToken;
 };

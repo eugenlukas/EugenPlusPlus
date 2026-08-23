@@ -18,6 +18,7 @@ int main(int argc, char** argv)
     }
 
     std::filesystem::path filepath = argv[1];
+    std::string filename = filepath.filename().replace_extension("");
 
     // Check if the file exists and is a regular file
     if (std::filesystem::exists(filepath) && std::filesystem::is_regular_file(filepath))
@@ -69,13 +70,16 @@ int main(int argc, char** argv)
     // Compile
     auto filepathNoEndfile(filepath);
     auto absoluteFilepathNoEndfile = std::filesystem::canonical(filepathNoEndfile);
+    auto absoluteFilepathNoEndfileExtension = std::filesystem::canonical(filepath).replace_extension("");
     absoluteFilepathNoEndfile.remove_filename();
     bool dumpIR = Helper::argv_has(argc, argv, "--dumpIR");
 
-    Compiler compiler;
+    bool bareMetal = Helper::argv_has(argc, argv, "--baremetal");
+
+    Compiler compiler(bareMetal);
     compiler.SetMainFilepath(filepath.string());
     compiler.GenerateIR(ast.GetNode(), dumpIR);
-    compiler.EmitObjectFile("output.o");
-    if(!Helper::argv_has(argc, argv, "--o"))
-        compiler.LinkObjectFile(absoluteFilepathNoEndfile);
+    compiler.EmitObjectFile(absoluteFilepathNoEndfileExtension.string() + ".o");
+    if(!bareMetal && !Helper::argv_has(argc, argv, "--o"))
+        compiler.LinkObjectFile(absoluteFilepathNoEndfile, filename);
 }
