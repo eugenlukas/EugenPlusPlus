@@ -318,8 +318,15 @@ ParseResult Parser::Expr()
 
 			if (res.HasError())
 				return res;
-			else
-				return res.Success(std::make_shared<VarAssignNode>(varName, expr, true, std::nullopt));
+
+			std::optional<std::string> inferredType = std::nullopt;
+			if (auto* strLiteral = dynamic_cast<StringNode*>(expr.get()))
+			{
+				if (strLiteral->GetIsChar())
+					inferredType = "char";
+			}
+
+			return res.Success(std::make_shared<VarAssignNode>(varName, expr, true, std::nullopt, inferredType));
 		}
 
 		// check if var type is validly typed
@@ -575,11 +582,11 @@ ParseResult Parser::Atom()
 		res.RegisterAdvancement();
 		return res.Success(std::make_shared<NumberNode>(tok));
 	}
-	else if (tok.GetType() == TT_STRING)
+	else if (tok.GetType() == TT_STRING || tok.GetType() == TT_CHAR)
 	{
 		Advance();
 		res.RegisterAdvancement();
-		return res.Success(std::make_shared<StringNode>(tok));
+		return res.Success(std::make_shared<StringNode>(tok, tok.GetType() == TT_CHAR));
 	}
 	else if (tok.GetType() == TT_IDENTIFIER)
 	{

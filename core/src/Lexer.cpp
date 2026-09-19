@@ -76,6 +76,15 @@ MakeTokensResult Lexer::MakeTokens()
 			case '"':
 				tokens.push_back(makeString());
 				break;
+			case '\'':
+			{
+				MakeMethodeResult res = makeChar();
+				if (res.error != nullptr)
+					return MakeTokensResult({}, std::move(res.error));
+
+				tokens.push_back(res.token);
+				break;
+			}
 			case '+':
 				tokens.push_back(Token(TT_PLUS, std::nullopt, pos));
 				Advance();
@@ -228,6 +237,52 @@ Token Lexer::makeString()
 	return Token(TT_STRING, string, posStart, pos);
 }
 
+MakeMethodeResult Lexer::makeChar()
+{
+	std::string charStr = "";
+	Position posStart = pos.Copy();
+	bool escapeCharacter = false;
+	Advance(); // skip opening '
+
+	std::unordered_map<char, std::string> escapeCharacters = {
+	{ 'n', "\n"},
+	{ 't', "\t"},
+	{ '\'', "'"},
+	{ '\\', "\\"}
+	};
+
+	while (current_char != '\0' && (current_char != '\'' || escapeCharacter))
+	{
+		if (escapeCharacter)
+		{
+			if (escapeCharacters.count(current_char))
+				charStr += escapeCharacters[current_char];
+			else
+				charStr += current_char;
+
+			escapeCharacter = false;
+		}
+		else
+		{
+			if (current_char == '\\')
+				escapeCharacter = true;
+			else
+				charStr += current_char;
+		}
+		Advance();
+	}
+
+	if (current_char != '\'')
+		return MakeMethodeResult({}, std::make_unique<ExpectedCharError>(posStart, pos, "closing \"'\""));
+
+	Advance(); // skip closing '
+
+	if (charStr.size() > 1)
+		return MakeMethodeResult({}, std::make_unique<IllegalCharError>(posStart, pos, "char literal '" + charStr + "' has length " + std::to_string(charStr.size()) + " (must be at most 1)"));
+
+	return MakeMethodeResult(Token(TT_CHAR, charStr, posStart, pos), nullptr);
+}
+
 Token Lexer::makeIdentifier()
 {
 	std::string id_str = "";
@@ -337,11 +392,10 @@ std::optional<Token> Lexer::makeDivOrComment()
 
 	if (current_char == '/')
 	{
-		while (current_char != '\n')
+		while (current_char != '\0' && current_char != '\n')
 		{
 			Advance();
 		}
-		Advance();
 
 		return std::nullopt;
 	}

@@ -19,9 +19,10 @@ std::string NumberNode::Repr()
 StringNode::StringNode()
 {}
 
-StringNode::StringNode(Token token)
+StringNode::StringNode(Token token, bool isChar)
 {
 	this->token = token;
+	this->isChar = isChar;
 
 	posStart = token.GetPosStart();
 	posEnd = token.GetPosEnd();

@@ -33,6 +33,7 @@ struct VarInfo
 {
     llvm::AllocaInst* alloca;
     bool isHeapAllocated;
+    std::string langType = ""; // declared source type ("char", "bool"), "" means not tracked and it makes it fall back to LLVM Type
 };
 
 struct ArrayTypeInfo
@@ -49,6 +50,7 @@ struct ArrayInfo
     bool isDynamic;
     int length; // fixed arrays (immutable element count)
     llvm::AllocaInst* lengthAlloca = nullptr; // dyn arrays (i32 alloca holding the current runtime count)
+    std::string elementLangType = ""; // like VarInfo::langType but for array elements
 };
 
 // Bundles everything the compiler needs to know about struct definitions
@@ -94,6 +96,7 @@ struct ProgramModule
 
 struct RuntimeFunctions
 {
+    llvm::Function* exit = nullptr;
     llvm::Function* concat = nullptr;
     llvm::Function* malloc = nullptr;
     llvm::Function* intToStr = nullptr;
@@ -121,6 +124,7 @@ struct MemberCallContext
 class Compiler
 {
 using MethodFunc = std::function<llvm::Value*(Compiler&, MemberCallContext&)>;
+using CompileTimeFunc = std::function<llvm::Value*(Compiler&, CallNode*)>;
 public:
     Compiler(bool bareMetal = false) : builder(context), m_bareMetal(bareMetal), m_abi(context, builder, *(module = std::make_unique<llvm::Module>("main_module", context)))
     {
@@ -130,6 +134,7 @@ public:
 
         RegisterBuiltinMethods();
         RegisterBuiltinMemberMethods();
+        RegisterCompileTimeBuiltins();
         RegisterConstants();
     }
 
@@ -153,6 +158,7 @@ private:
     std::map<std::string, llvm::Function*> m_functions;
     std::vector<LoopContext> m_loopStack;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
+    std::unordered_map<std::string, CompileTimeFunc> m_compileTimeBuiltins;
     std::unordered_map<std::string, llvm::Constant*> m_constants;
     std::unordered_map<std::string, ArrayInfo> m_arrays;
     StructRegistry m_structs;
@@ -192,12 +198,15 @@ private:
     llvm::Value* Compile_ExternNode(ExternNode* node);
     llvm::Value* Compile_StructDefNode(StructDefNode* node);
 
+    void EmitRuntimeAssert(llvm::Value* cond, const std::string& msg);
+
     void PushScope();
     void PopScope();
 
     VarInfo* FindVariable(const std::string& name);
     void SetVariable(const std::string& name, VarInfo info);
     void RegisterMemberMethod(const std::string& typeName, const std::string& methodName, MethodFunc func);
+    void RegisterCompileTimeBuiltin(const std::string& name, int arity, CompileTimeFunc func);
 
     // flattens m_scopes into a single name→VarInfo map so we can snapshot all currently visible variables before compiling a module and diff afterwards
     std::unordered_map<std::string, VarInfo> CollectAllVariables() const;
@@ -217,14 +226,22 @@ private:
 
     void RegisterBuiltinMethods();
     void RegisterBuiltinMemberMethods();
+    void RegisterCompileTimeBuiltins();
     void RegisterConstants();
 
+    // Helpers
     llvm::AllocaInst* CreateEntryBlockAlloca(const std::string& name, llvm::Type* type);
     llvm::Value* IntToString(llvm::Value* val);
     llvm::Type* StringToLLVMType(const std::string& typeName);
+    std::string LLVMTypeToString(llvm::Type *type);
+    llvm::Value* Compile_CharToHeapString(llvm::Value* charVal);
+    llvm::Value* Compile_CharArrayFromString(VarAssignNode* node, const std::string& name, ArrayTypeInfo& info);
+    std::string GetExprLangType(const std::shared_ptr<Node>& node);
     std::optional<ArrayTypeInfo> ParseArrayTypeName(const std::string &typeName);
     llvm::Value* CreateFormatString(const std::string& fmt);
     llvm::Value* GetArrayElementPtr(llvm::AllocaInst* alloca, llvm::Type* elementType, int length, bool isDynamic, llvm::Value* indexVal, const std::string& name);
+    static bool NodeContainsCall(const std::shared_ptr<Node>& node);
+    std::string ResolveStaticTypeName(const std::shared_ptr<Node> &node);
 
     void InitializeTargetInfo();
     std::string DetectLinker();

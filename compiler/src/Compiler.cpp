@@ -213,6 +213,10 @@ llvm::Value *Compiler::Compile_ListNode(ListNode *node)
 llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::string &name, ArrayTypeInfo info)
 {
     auto* listNode = dynamic_cast<ListNode*>(node->GetValueNode().get());
+
+    if (!listNode && !info.isDynamic && info.elementTypeName == "char")
+        return Compile_CharArrayFromString(node, name, info);
+
     if (!listNode)
     {
         std::cerr << "Array variable '" << name << "' must be initialized with a list literal\n";
@@ -357,7 +361,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
     if (!existingIsArray)
         SetVariable(name, { alloca, isHeap });
 
-    m_arrays[name] = { info.elementType, info.isDynamic, length, lengthAlloca };
+    m_arrays[name] = { info.elementType, info.isDynamic, length, lengthAlloca, info.elementTypeName };
 
     return alloca;
 }
@@ -376,19 +380,28 @@ llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
     VarInfo* var = FindVariable(name);
     if (!var)
     {
-        std::cerr << "Index access error: '" << name << "' is not a know variable\n";
+        std::cerr << "Index access error: '" << name << "' is not a known variable\n";
         return nullptr;
     }
 
     llvm::Value* indexVal = CompileNode(node->GetIndexNode());
     if (!indexVal)
         return nullptr;
+    if (indexVal->getType() != builder.getInt32Ty())
+        indexVal = builder.CreateIntCast(indexVal, builder.getInt32Ty(), true, "idxCast");
 
     // array element access
     auto arrIt = m_arrays.find(name);
     if (arrIt != m_arrays.end())
     {
         const ArrayInfo& info = arrIt->second;
+
+        // Bouds checking
+        llvm::Value* lengthVal = info.isDynamic ? static_cast<llvm::Value*>(builder.CreateLoad(builder.getInt32Ty(), info.lengthAlloca, name + "Len"))
+                                                : static_cast<llvm::Value*>(builder.getInt32((uint32_t)info.length));
+        llvm::Value* inBounds = builder.CreateAnd(builder.CreateICmpSGE(indexVal, builder.getInt32(0)), builder.CreateICmpSLT(indexVal, lengthVal));
+        EmitRuntimeAssert(inBounds, "Index out of bounds accessing '" + name + "'");
+
         llvm::Value* elemPtr = GetArrayElementPtr(var->alloca, info.elementType, info.length, info.isDynamic, indexVal, name);
         return builder.CreateLoad(info.elementType, elemPtr, name + "Elem");
     }
@@ -397,15 +410,15 @@ llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
     if (var->alloca->getAllocatedType() == builder.getInt8Ty()->getPointerTo() && !m_structs.IsStructVar(name))
     {
         llvm::Value* strVal = builder.CreateLoad(builder.getInt8Ty()->getPointerTo(), var->alloca, name);
+
+        // Bouds checking
+        llvm::Value* len64 = builder.CreateCall(m_runtime.strlen, { strVal }, name + "Len");
+        llvm::Value* len32 = builder.CreateTrunc(len64, builder.getInt32Ty(), name + "LenI32");
+        llvm::Value* inBounds = builder.CreateAnd(builder.CreateICmpSGE(indexVal, builder.getInt32(0)), builder.CreateICmpSLT(indexVal, len32));
+        EmitRuntimeAssert(inBounds, "Index out of bounds accessing '" + name + "'");
+
         llvm::Value* charPtr = builder.CreateGEP(builder.getInt8Ty(), strVal, indexVal, name + "CharPtr");
-        llvm::Value* charVal = builder.CreateLoad(builder.getInt8Ty(), charPtr, name + "Char");
-
-        llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { builder.getInt64(2) }, name + "CharStrRaw");
-        builder.CreateStore(charVal, raw);
-        llvm::Value* nulPtr = builder.CreateGEP(builder.getInt8Ty(), raw, builder.getInt32(1));
-        builder.CreateStore(builder.getInt8(0), nulPtr);
-
-        return raw;
+        return builder.CreateLoad(builder.getInt8Ty(), charPtr, name + "Char");
     }
 
     std::cerr << "Index access error: '" << name << "' is not a known array or string variable\n";
@@ -439,6 +452,16 @@ llvm::Value *Compiler::Compile_IndexAssignNode(IndexAssignNode *node)
     llvm::Value* indexVal = CompileNode(node->GetIndexNode());
     if (!indexVal)
         return nullptr;
+    if (indexVal->getType() != builder.getInt32Ty())
+        indexVal = builder.CreateIntCast(indexVal, builder.getInt32Ty(), true, "idxCast");
+
+    // Bouds checking
+    llvm::Value* lengthVal = info.isDynamic ? static_cast<llvm::Value*>(builder.CreateLoad(builder.getInt32Ty(), info.lengthAlloca, name + "Len"))
+                                            : static_cast<llvm::Value*>(builder.getInt32((uint32_t)info.length));
+    llvm::Value* inBounds = builder.CreateAnd(
+        builder.CreateICmpSGE(indexVal, builder.getInt32(0)),
+        builder.CreateICmpSLT(indexVal, lengthVal));
+    EmitRuntimeAssert(inBounds, "Index out of bounds assigning into '" + name + "'");
 
     llvm::Value* value = CompileNode(node->GetValueNode());
     if (!value)
@@ -463,6 +486,9 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
 {
     llvm::Value* left = CompileNode(node->GetLeftNode());
     llvm::Value* right = CompileNode(node->GetRightNode());
+    if (!left || !right)
+        return nullptr;
+
     llvm::Type* leftTy = left->getType();
     llvm::Type* rightTy = right->getType();
 
@@ -551,6 +577,17 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
     if (op == TT_PLUS)
     {
         llvm::Type* strTy = builder.getInt8Ty()->getPointerTo();
+
+        if (GetExprLangType(node->GetLeftNode()) == "char")
+        {
+            left = Compile_CharToHeapString(left);
+            m_heapValues.insert(left);
+        }
+        if (GetExprLangType(node->GetRightNode()) == "char")
+        {
+            right = Compile_CharToHeapString(right);
+            m_heapValues.insert(right);
+        }
 
         // string + string
         if (leftTy == strTy && rightTy == strTy)
@@ -964,9 +1001,10 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     if (!value) return nullptr;
 
     // enforce strict type annotation
+    std::string declaredTypeName = "";
     if (node->GetIsDeclaration() && node->GetStrictVarDatatype().has_value())
     {
-        const std::string declaredTypeName = node->GetStrictVarDatatype().value();
+        declaredTypeName = node->GetStrictVarDatatype().value();
         llvm::Type* declaredTy = StringToLLVMType(declaredTypeName);
 
         if (!declaredTy)
@@ -975,7 +1013,25 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
             return nullptr;
         }
 
-        if (value->getType() != declaredTy && declaredTy->isFloatingPointTy())
+        if (declaredTypeName == "char")
+        {
+            if (auto* strLiteral = dynamic_cast<StringNode*>(node->GetValueNode().get()))
+            {
+                auto str = std::get<std::string>(strLiteral->GetToken().GetValue());
+                if (str.size() > 1)
+                {
+                    std::cerr << "Type mismatch: variable '" << name << "' declared as 'char' but literal \"" << str << "\" has length " << str.size() << " (must be at most 1)\n";
+                    return nullptr;
+                }
+                value = builder.getInt8(str.empty() ? 0 : static_cast<uint8_t>(str[0]));
+            }
+            else if (value->getType() != declaredTy)
+            {
+                std::cerr << "Type mismatch: variable '" << name << "' declared as 'char' but the assigned value is not a char\n";
+                return nullptr;
+            }
+        }
+        else if (value->getType() != declaredTy && declaredTy->isFloatingPointTy())
         {
             if (value->getType()->isIntegerTy())
                 value = builder.CreateSIToFP(value, declaredTy, "intToFp");
@@ -984,6 +1040,14 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
             else if (value->getType()->isFloatTy() && declaredTy->isDoubleTy())
                 value = builder.CreateFPExt(value, declaredTy, "fpExt");
         }
+    }
+
+    // "name : var = ..." carries no annotation, infer a language-level type name
+    if (node->GetIsDeclaration() && declaredTypeName.empty())
+    {
+        std::string inferred = ResolveStaticTypeName(node->GetValueNode());
+        if (inferred != "unknown")
+            declaredTypeName = inferred;
     }
 
     // if RHS is a call to an extern that returns a struct, record the mapping
@@ -1012,7 +1076,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
             return nullptr;
         }
         alloca = CreateEntryBlockAlloca(name, type);
-        SetVariable(name, { alloca, isHeap });
+        SetVariable(name, { alloca, isHeap, declaredTypeName });
     }
     else
     {
@@ -1664,14 +1728,28 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         return call;
     }
 
+    // Builtin compiletime functions
+    auto compileTimeIt = m_compileTimeBuiltins.find(name);
+    if (compileTimeIt != m_compileTimeBuiltins.end())
+        return compileTimeIt->second(*this, node);
+
     // Builtin functions
     if (m_builtins.find(name) != m_builtins.end())
     {
-        std::vector<llvm::Value*> args;
+        if ((name == "print" || name == "println") && node->GetArgNodes().size() == 1 && GetExprLangType(node->GetArgNodes()[0]) == "char")
+        {
+            llvm::Value* charVal = CompileNode(node->GetArgNodes()[0]);
+            if (!charVal)
+                return nullptr;
 
+            llvm::Value* promoted = builder.CreateZExt(charVal, builder.getInt32Ty(), "charPromote");
+            llvm::Value* fmt = builder.CreateGlobalStringPtr(name == "println" ? "%c\n" : "%c", "fmt");
+            return builder.CreateCall(m_runtime.printf, { fmt, promoted });
+        }
+
+        std::vector<llvm::Value*> args;
         for (auto& argNode : node->GetArgNodes())
             args.push_back(CompileNode(argNode));
-
         return m_builtins[name]->Codegen(builder, args);
     }
 
@@ -2112,6 +2190,27 @@ llvm::Value *Compiler::Compile_StructDefNode(StructDefNode *node)
     return nullptr;
 }
 
+void Compiler::EmitRuntimeAssert(llvm::Value *cond, const std::string &msg)
+{
+    if (m_bareMetal || !m_runtime.printf || !m_runtime.exit)
+        return;
+
+    llvm::Function* fn = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock* failBB = llvm::BasicBlock::Create(context, "assert.fail", fn);
+    llvm::BasicBlock* okBB   = llvm::BasicBlock::Create(context, "assert.ok", fn);
+
+    builder.CreateCondBr(cond, okBB, failBB);
+
+    builder.SetInsertPoint(failBB);
+    llvm::Value* fmt = builder.CreateGlobalStringPtr("%s\n", "assertFmt");
+    llvm::Value* message = builder.CreateGlobalStringPtr(msg, "assertMsg");
+    builder.CreateCall(m_runtime.printf, { fmt, message });
+    builder.CreateCall(m_runtime.exit, { builder.getInt32(1) });
+    builder.CreateUnreachable();
+
+    builder.SetInsertPoint(okBB);
+}
+
 void Compiler::PushScope()
 {
     m_scopes.emplace_back();
@@ -2140,6 +2239,21 @@ void Compiler::SetVariable(const std::string &name, VarInfo info)
 void Compiler::RegisterMemberMethod(const std::string &typeName, const std::string &methodName, MethodFunc func)
 {
     m_memberMethods[typeName + "::" + methodName] = std::move(func);
+}
+
+void Compiler::RegisterCompileTimeBuiltin(const std::string &name, int arity, CompileTimeFunc func)
+{
+    // arity < 0 means variadic; the wrapper keeps the check out of every individual builtin
+    m_compileTimeBuiltins[name] = [name, arity, func](Compiler& c, CallNode* node) -> llvm::Value*
+    {
+        if (arity >= 0 && (int)node->GetArgNodes().size() != arity)
+        {
+            std::cerr << name << " expects exactly " << arity << " argument(s). Got " << node->GetArgNodes().size() << "\n";
+            return nullptr;
+        }
+
+        return func(c, node);
+    };
 }
 
 std::unordered_map<std::string, VarInfo> Compiler::CollectAllVariables() const
@@ -2497,6 +2611,7 @@ void Compiler::DeclareRuntimeFunctions()
     llvm::Type* i64    = builder.getInt64Ty();
     llvm::Type* voidTy = llvm::Type::getVoidTy(context);
 
+    m_runtime.exit = DeclareExternalFunction("exit", voidTy, { i32 });
     m_runtime.concat = DeclareExternalFunction("concat", i8p, { i8p, i8p });
     m_runtime.intToStr = DeclareExternalFunction("int_to_string", i8p, { i32 });
     m_runtime.free = DeclareExternalFunction("free", voidTy, { i8p });
@@ -2727,6 +2842,30 @@ void Compiler::RegisterBuiltinMemberMethods()
     });
 }
 
+void Compiler::RegisterCompileTimeBuiltins()
+{
+    RegisterCompileTimeBuiltin("type_of", 1, [](Compiler& c, CallNode* node) -> llvm::Value*
+    {
+        std::shared_ptr<Node> arg = node->GetArgNodes()[0];
+
+        // checks if type_of(method()) or type_of(...::method()) is passed in
+        if (NodeContainsCall(arg))
+        {
+            std::cerr << "type_of: the argument must not contain a function or method call. type_of never evaluates its argument, so the call would silently not run\n";
+            return nullptr;
+        }
+
+        std::string typeName = c.ResolveStaticTypeName(arg);
+        if (typeName == "unknown")
+        {
+            std::cerr << "type_of: could not determine the type of the argument at compile time\n";
+            return nullptr;
+        }
+
+        return c.builder.CreateGlobalStringPtr(typeName, "typeOfTmp");
+    });
+}
+
 llvm::AllocaInst *Compiler::CreateEntryBlockAlloca(const std::string &name, llvm::Type *type)
 {
     llvm::Function* func = builder.GetInsertBlock()->getParent();
@@ -2800,6 +2939,120 @@ llvm::Type *Compiler::StringToLLVMType(const std::string &typeName)
     return builder.getInt32Ty();
 }
 
+std::string Compiler::LLVMTypeToString(llvm::Type *type)
+{
+    if (!type)              return "unknown";
+    if (type->isVoidTy())   return "void";
+    if (type->isFloatTy())  return "float";
+    if (type->isDoubleTy()) return "double";
+
+    if (auto* intTy = llvm::dyn_cast<llvm::IntegerType>(type))
+    {
+        if (intTy->getBitWidth() == 1)
+            return "bool";
+        else
+            return "int" + std::to_string(intTy->getBitWidth());
+    }
+
+    if (type->isStructTy())
+    {
+        for (auto& [typeName, structTy] : m_structs.types)
+            if (structTy == type)
+                return typeName;
+
+        return "struct";
+    }
+
+    if (type->isPointerTy())
+        return "string";
+
+    return "unknown";
+}
+
+llvm::Value *Compiler::Compile_CharToHeapString(llvm::Value *charVal)
+{
+    llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { builder.getInt64(2) }, "charStrRaw");
+    builder.CreateStore(charVal, raw);
+
+    llvm::Value* nulPtr = builder.CreateGEP(builder.getInt8Ty(), raw, builder.getInt32(1));
+    builder.CreateStore(builder.getInt8(0), nulPtr);
+
+    return raw;
+}
+
+llvm::Value *Compiler::Compile_CharArrayFromString(VarAssignNode *node, const std::string &name, ArrayTypeInfo& info)
+{
+    llvm::Value* rhs = CompileNode(node->GetValueNode());
+    if (!rhs)
+        return nullptr;
+
+    if (rhs->getType() != builder.getInt8Ty()->getPointerTo())
+    {
+        std::cerr << "Array variable '" << name << "' (char[" << info.fixedSize << "]) must be initialized with a list literal or a string-valued expression\n";
+        return nullptr;
+    }
+
+    llvm::Value* srcLen64 = builder.CreateCall(m_runtime.strlen, { rhs }, name + "InitLen");
+    llvm::Value* srcLen32 = builder.CreateTrunc(srcLen64, builder.getInt32Ty(), name + "InitLenI32");
+    EmitRuntimeAssert(builder.CreateICmpEQ(srcLen32, builder.getInt32(info.fixedSize)), "'" + name + "' expects exactly " + std::to_string(info.fixedSize) + " character(s)");
+
+    VarInfo* existing = FindVariable(name);
+    llvm::ArrayType* arrTy = llvm::ArrayType::get(builder.getInt8Ty(), (uint64_t)info.fixedSize);
+    llvm::AllocaInst* alloca;
+
+    if (existing)
+        alloca = existing->alloca;
+    else
+    {
+        alloca = CreateEntryBlockAlloca(name, arrTy);
+        SetVariable(name, { alloca, false });
+    }
+
+    for (int i = 0; i < info.fixedSize; i++)
+    {
+        llvm::Value* srcPtr = builder.CreateGEP(builder.getInt8Ty(), rhs, builder.getInt32(i), name + "InitSrc");
+        llvm::Value* byteVal = builder.CreateLoad(builder.getInt8Ty(), srcPtr, name + "InitByte");
+        llvm::Value* dstPtr = builder.CreateGEP(arrTy, alloca, { builder.getInt32(0), builder.getInt32(i) }, name + "InitDst");
+        builder.CreateStore(byteVal, dstPtr);
+    }
+
+    m_arrays[name] = { builder.getInt8Ty(), false, info.fixedSize, nullptr, "char" };
+
+    return alloca;
+}
+
+std::string Compiler::GetExprLangType(const std::shared_ptr<Node> &node)
+{
+    if (auto* va = dynamic_cast<VarAccessNode*>(node.get()))
+    {
+        if (va->GetIsNamespaced())
+            return "";
+        VarInfo* var = FindVariable(std::get<std::string>(va->GetVarNameToken().GetValue()));
+        return var ? var->langType : "";
+    }
+
+    if (auto* idx = dynamic_cast<IndexGetNode*>(node.get()))
+    {
+        auto* va = dynamic_cast<VarAccessNode*>(idx->GetListNode().get());
+        if (!va || va->GetIsNamespaced())
+            return "";
+
+        std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
+
+        auto arrIt = m_arrays.find(name);
+        if (arrIt != m_arrays.end())
+            return arrIt->second.elementLangType;
+
+        VarInfo* var = FindVariable(name);
+        if (var && var->alloca->getAllocatedType() == builder.getInt8Ty()->getPointerTo() && !m_structs.IsStructVar(name))
+            return "char"; // indexing a plain string yields a char
+
+        return "";
+    }
+
+    return "";
+}
+
 std::optional<ArrayTypeInfo> Compiler::ParseArrayTypeName(const std::string &typeName)
 {
     if (typeName.empty() || typeName.back() != ']')
@@ -2846,6 +3099,111 @@ llvm::Value *Compiler::GetArrayElementPtr(llvm::AllocaInst *alloca, llvm::Type *
 
     llvm::Value* idx[] = { llvm::ConstantInt::get(builder.getInt32Ty(), 0), indexVal };
     return builder.CreateGEP(llvm::ArrayType::get(elementType, (uint64_t)length), alloca, idx, name + "ElemPtr");
+}
+
+bool Compiler::NodeContainsCall(const std::shared_ptr<Node> &node)
+{
+    if (!node)
+        return false;
+
+    if (dynamic_cast<CallNode*>(node.get()))
+        return true;
+
+    if (auto* bin = dynamic_cast<BinOpNode*>(node.get()))
+        return NodeContainsCall(bin->GetLeftNode()) || NodeContainsCall(bin->GetRightNode());
+
+    if (auto* un = dynamic_cast<UnaryOpNode*>(node.get()))
+        return NodeContainsCall(un->GetNode());
+
+    if (auto* idx = dynamic_cast<IndexGetNode*>(node.get()))
+        return NodeContainsCall(idx->GetListNode()) || NodeContainsCall(idx->GetIndexNode());
+
+    if (auto* list = dynamic_cast<ListNode*>(node.get()))
+    {
+        for (auto& elem : list->GetElementNodes())
+            if (NodeContainsCall(elem))
+                return true;
+    }
+
+    return false;
+}
+
+std::string Compiler::ResolveStaticTypeName(const std::shared_ptr<Node> &node)
+{
+    // literals
+    if (auto* num = dynamic_cast<NumberNode*>(node.get()))
+        return std::holds_alternative<int>(num->GetToken().GetValue()) ? "int" : "float";
+
+    if (auto* str = dynamic_cast<StringNode*>(node.get()))
+        return str->GetIsChar() ? "char" : "string";
+
+    if (auto* list = dynamic_cast<ListNode*>(node.get()))
+    {
+        auto elems = list->GetElementNodes();
+        std::string elemType = elems.empty() ? "void" : ResolveStaticTypeName(elems[0]);
+        return elemType + "[" + std::to_string(elems.size()) + "]";
+    }
+
+    // variables
+    if (auto* va = dynamic_cast<VarAccessNode*>(node.get()))
+    {
+        if (va->GetIsNamespaced())
+            return "unknown";
+
+        std::string varName = std::get<std::string>(va->GetVarNameToken().GetValue());
+
+        auto arrIt = m_arrays.find(varName);
+        if (arrIt != m_arrays.end())
+        {
+            const ArrayInfo& info = arrIt->second;
+            return info.elementLangType + "[" + (info.isDynamic ? std::string("dyn") : std::to_string(info.length)) + "]";
+        }
+
+        if (m_structs.IsStructVar(varName))
+            return m_structs.varToType.at(varName);
+
+        VarInfo* var = FindVariable(varName);
+        if (!var)
+            return "unknown";
+
+        // the declared annotation is authoritative: it distinguishes char/bool/int8, which all lower to i8
+        if (!var->langType.empty())
+            return var->langType;
+
+        return LLVMTypeToString(var->alloca->getAllocatedType());
+    }
+
+    // indexing: array element type, or char when indexing a plain string
+    if (dynamic_cast<IndexGetNode*>(node.get()))
+    {
+        std::string elem = GetExprLangType(node);
+        return elem.empty() ? "unknown" : elem;
+    }
+
+    // operators: take whichever operand we can name
+    if (auto* bin = dynamic_cast<BinOpNode*>(node.get()))
+    {
+        std::string left = ResolveStaticTypeName(bin->GetLeftNode());
+        return left != "unknown" ? left : ResolveStaticTypeName(bin->GetRightNode());
+    }
+
+    if (auto* un = dynamic_cast<UnaryOpNode*>(node.get()))
+        return ResolveStaticTypeName(un->GetNode());
+
+    // user function call -> its declared return type
+    if (auto* call = dynamic_cast<CallNode*>(node.get()))
+    {
+        if (auto* callee = dynamic_cast<VarAccessNode*>(call->GetNodeToCall().get()); callee && !callee->GetIsNamespaced())
+        {
+            auto it = m_functions.find(std::get<std::string>(callee->GetVarNameToken().GetValue()));
+            if (it != m_functions.end())
+                return LLVMTypeToString(it->second->getReturnType());
+        }
+
+        return "unknown";
+    }
+
+    return "unknown";
 }
 
 void Compiler::InitializeTargetInfo()

@@ -71,13 +71,15 @@ class StringNode : public Node
 {
 public:
 	StringNode();
-	StringNode(Token token);
+	StringNode(Token token, bool isChar = false);
 
 	std::string Repr() override;
 	Token GetToken() { return token; };
+	bool GetIsChar() { return isChar; };
 
 private:
 	Token token;
+	bool isChar = false;
 };
 
 class ListNode : public Node 
