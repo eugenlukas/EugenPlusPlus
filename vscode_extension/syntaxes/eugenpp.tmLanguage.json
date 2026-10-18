@@ -1,0 +1,30 @@
+{
+  "$schema": "https://githubusercontent.com",
+  "name": "eugen++",
+  "scopeName": "source.eugenpp",
+  "patterns": [
+    {
+      "name": "keyword.control.eugenpp",
+      "match": "\\b(if|else|while|return|for|break|continue)\\b"
+    },
+    {
+      "name": "storage.type.eugenpp",
+      "match": "\\b(int|float|string|bool|void|func|char|var)\\b"
+    },
+    {
+      "name": "string.quoted.double.eugenpp",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.eugenpp",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "comment.line.double-slash.eugenpp",
+      "match": "//.*$"
+    }
+  ]
+}

@@ -25,8 +25,8 @@ void TestDecode()
     if (error != nullptr)
         LOG(error->msg);
 
-    if (contentLength != 15)
-        LOG("Expected: 15, Got: " + std::to_string(contentLength));
+    if (contentLength.length() != 15)
+        LOG("Expected: 15, Got: " + std::to_string(contentLength.length()));
 
     if (method != "hi")
         LOG("Expected: 'hi', Got: " + method);

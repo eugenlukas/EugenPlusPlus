@@ -14,8 +14,23 @@
 		"languages": [{
 			"id": "eugenpp",
 			"aliases": ["Eugen++", "eugenpp"],
-			"extensions": [".epp"]
-		}]
+			"extensions": [".epp"],
+			"configuration": "./language-configuration.json"
+		}],
+		"grammars": [{
+			"language": "eugenpp",
+        	"scopeName": "source.eugenpp",
+        	"path": "./syntaxes/eugenpp.tmLanguage.json"
+		}],
+		"configuration": {
+    		"properties": {
+      			"editor.semanticHighlighting.enabled": {
+        			"type": "boolean",
+        			"default": true,
+        			"description": "Enable semantic highlighting for eugenpp."
+      			}
+    		}
+  		}
 	},
 	"scripts": {
 		"vscode:prepublish": "tsc -p ./",

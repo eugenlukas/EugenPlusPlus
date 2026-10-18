@@ -7,9 +7,9 @@
 
 using byte = unsigned char;
 
-struct Error
+struct LSPError
 {
-    Error(std::string msg) { this->msg = msg; }
+    LSPError(std::string msg) { this->msg = msg; }
     std::string msg;
 };
 
