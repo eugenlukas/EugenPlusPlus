@@ -31,6 +31,7 @@ public:
 	Lexer(const std::string& fn, const std::string& text);
 
 	void Advance();
+	char Peek();
 	MakeTokensResult MakeTokens();
 
 private:

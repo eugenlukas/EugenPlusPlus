@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <Compiler.hpp>
+#include <fmt/core.h>
+#include <fmt/color.h>
 
 int main(int argc, char** argv)
 {
@@ -41,12 +43,16 @@ int main(int argc, char** argv)
     if (trimText.empty())
         return 0;
 
+    // info
+    fmt::print(fmt::fg(fmt::color::cyan) | fmt::emphasis::bold, "Compiling");
+    std::cout << " \"" << filepath.string() << "\"\n";
+
     // Generate tokens
     Lexer lexer(std::filesystem::path(argv[1]).filename().string(), text);
     MakeTokensResult tokenResult = lexer.MakeTokens();
     if (tokenResult.error != nullptr)
     {
-        std::cerr << Helper::GetErrorString(tokenResult.error.get()) << std::endl;
+        Helper::PrintErrorString(tokenResult.error.get());
         return 1;
     }
 
@@ -59,7 +65,7 @@ int main(int argc, char** argv)
     ParseResult ast = parser.Parse();
     if (ast.HasError())
     {
-        std::cerr << Helper::GetErrorString(ast.GetErrorPtr()) << std::endl;
+        Helper::PrintErrorString(ast.GetErrorPtr());
         return 1;
     }
         
@@ -73,12 +79,16 @@ int main(int argc, char** argv)
     auto absoluteFilepathNoEndfileExtension = std::filesystem::canonical(filepath).replace_extension("");
     absoluteFilepathNoEndfile.remove_filename();
     bool dumpIR = Helper::argv_has(argc, argv, "--dumpIR");
-
     bool bareMetal = Helper::argv_has(argc, argv, "--baremetal");
 
     Compiler compiler(bareMetal);
     compiler.SetMainFilepath(filepath.string());
-    compiler.GenerateIR(ast.GetNode(), dumpIR);
+    bool success = compiler.GenerateIR(ast.GetNode(), dumpIR);
+    if (!success)
+    {
+        std::cerr << "Compilation aborted due to invalid generated IR.\n";
+        return 1;
+    }
     compiler.EmitObjectFile(absoluteFilepathNoEndfileExtension.string() + ".o");
     if(!bareMetal && !Helper::argv_has(argc, argv, "--o"))
         compiler.LinkObjectFile(absoluteFilepathNoEndfile, filename);

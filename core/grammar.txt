@@ -1,63 +1,120 @@
+Notation: UPPERCASE = token, KEYWORD:X = keyword token with value x, a | b = alternatives,
+          x? = optional, x* = zero or more, x+ = one or more.
+Blocks have no opening brace: they start after a NEWLINE and are closed by RCURLYBRACKET '}'.
+
+
+program				:	statements EOF
+
 statements			:	NEWLINE* statement (NEWLINE+ statement)* NEWLINE*
 
-statement			:	import-statement
+statement			:	directive
+					:	attribute-list NEWLINE* (method-decl | struct-def)
+					:	method-decl
 					:	KEYWORD:RETURN expr?
 					:	KEYWORD:CONTINUE
 					:	KEYWORD:BREAK
-					:	expr 
+					:	expr
 
-import-statement	: HASH KEYWORD:IMPORT STRING KEYWORD:AS IDENTIFIER
+### DIRECTIVES	###################################################################################
 
-expr				:	KEYWORD:VAR IDENTIFIER EQ expr
-					:	comp-expr ((KEYWORD:AND|KEYWORD:OR)comp-expr)*
+directive			:	HASH KEYWORD:MODULE STRING KEYWORD:AS IDENTIFIER
+					:	HASH KEYWORD:LINK STRING KEYWORD:AS IDENTIFIER
+					:	HASH KEYWORD:EXTERN IDENTIFIER DBLCOLON IDENTIFIER KEYWORD:AS STRING
 
-comp-epr			:	NOT comp-expr
-					:	arith-expr ((EQEQ|LT|GT|LTEQ|GTEQ) arith-expr)*
+attribute-list		:	LSQUARE attribute (COMMA attribute)* RSQUARE
 
-arith-expr			:	term((PLUS|MINUS) term)*
+attribute			:	IDENTIFIER (LPAREN (STRING | IDENTIFIER) RPAREN)?
 
-term				:	factor((MUL|DIV|AT) factor)*
+### METHODS		###################################################################################
 
-factor				:	(PLUS|MINUS) factor
+/* Named method. There is no 'func' keyword. */
+method-decl			:	IDENTIFIER method-sig method-body
+
+/* Anonymous method. 'func' is only used for anonymous methods. */
+anon-method			:	KEYWORD:FUNC method-sig method-body
+
+method-sig			:	LPAREN (param (COMMA param)*)? RPAREN (COLON return-type)?
+
+param				:	KEYWORD:REF? IDENTIFIER COLON type (EQ expr)?
+
+return-type			:	KEYWORD:VAR			compiler guesses the type (slower compile, can guess wrong)
+					:	type				strict type, 'void' = nothing is returned
+
+method-body			:	ARROW expr
+					:	NEWLINE statements? RCURLYBRACKET
+
+/*
+ Return type rules
+   - ': type'  strict return type. The method is a FUNCTION: every 'return' needs a value.
+   - ': var'   the compiler guesses the return type. 'return' may or may not carry a value.
+   - no ': ..' is treated as ': void' (a PROCEDURE) and gives a warning. 'return' can not carry a value.
+   - '-> expr' returns the value of expr. For a procedure (': void' or no type) the value is discarded.
+
+ A method declaration is told apart from a call by looking ahead (no tokens are consumed):
+   name ( )                   declaration only if followed by ':' or '->', otherwise it is a call
+   name ( ref ...             declaration
+   name ( IDENTIFIER : ...    declaration
+   anything else              call
+ So a method without parameters and without a return type can not be declared with 'name()':
+ write 'name() : void' instead.
+*/
+
+type				:	(IDENTIFIER | KEYWORD) array-suffix?
+
+array-suffix		:	LSQUARE (INT | KEYWORD:DYN) RSQUARE
+
+struct-def			:	KEYWORD:STRUCT IDENTIFIER NEWLINE (IDENTIFIER IDENTIFIER NEWLINE)* RCURLYBRACKET
+
+### EXPRESSIONS	###################################################################################
+
+/* every variable declaration needs an initial value */
+expr				:	IDENTIFIER COLON KEYWORD:VAR EQ expr
+					:	IDENTIFIER COLON type EQ expr
+					:	IDENTIFIER LSQUARE expr RSQUARE EQ expr
+					:	IDENTIFIER EQ expr
+					:	comp-expr ((KEYWORD:AND | KEYWORD:OR) comp-expr)*
+
+comp-expr			:	KEYWORD:NOT comp-expr
+					:	arith-expr ((EQEQ | NEQ | LT | GT | LTEQ | GTEQ) arith-expr)*
+
+arith-expr			:	term ((PLUS | MINUS | AT) term)*
+
+term				:	factor ((MUL | DIV | MOD) factor)*
+
+factor				:	(PLUS | MINUS) factor
 					:	power
 
 power				:	call (POW factor)*
 
-call				:	atom (LPARAM (expr (COMMA expr)*)? RPARAM)?
+call				:	atom (LSQUARE expr RSQUARE)* (LPAREN (expr (COMMA expr)*)? RPAREN)?
 
-atom				:	INT|FLOAT|STRING|IDENTIFIER
-					:	IDENTIFIER (DBLCONON IDENTIFIER)?
+atom				:	INT | FLOAT | STRING | CHAR
+					:	IDENTIFIER (DBLCOLON IDENTIFIER (EQ expr)?)?
 					:	LPAREN expr RPAREN
 					:	list-expr
 					:	if-expr
 					:	for-expr
 					:	while-expr
-					:	func-def
+					:	anon-method
+					:	struct-def
 
 list-expr			:	LSQUARE (expr (COMMA expr)*)? RSQUARE
 
-if-expr				:	KEYWORD:IF expr KEYWORD:THEN
-						(statement if-expr-b| if-expr-c?)
-					|	(NEWLINE statements RCURLYBRACKET|if-expr-b| if-expr-c)
+### CONTROL FLOW ###################################################################################
 
-if-expr-b			:	KEYWORD:ELIF expr KEYWORD:THEN
-						(statement if-expr-b| if-expr-c?)
-					|	(NEWLINE statements RCURLYBRACKET|if-expr-b| if-expr-c)
+if-expr				:	KEYWORD:IF expr KEYWORD:THEN if-branch
 
-if-expr-c			:	KEYWORD:ELSE
-						statement
-					|	(NEWLINE statements RCURLYBRACKET)
+elif-part			:	KEYWORD:ELIF expr KEYWORD:THEN if-branch
 
-for-expr			:	KEYWORD:FOR IDENTIFIER EQ expr KEYWORD:TO expr
-						(KEYWORD:STEP)? KEYWORD:THEN
-						statement
-					|	(NEWLINE statements RCURLYBRACKET)
+if-branch			:	statement (elif-part | else-part)?
+					:	NEWLINE statements? RCURLYBRACKET (NEWLINE? (elif-part | else-part))?
 
-while-expr			:	KEYWORD:WHILE expr KEYWORD:THEN
-						statement
-					|	(NEWLINE statements RCURLYBRACKET)
+else-part			:	KEYWORD:ELSE statement
+					:	KEYWORD:ELSE NEWLINE statements RCURLYBRACKET
 
-func-def			:	KEYWORD:FUNC IDENTIFIER?
-						LPARAM (IDENTIFIER (COMMA IDENTIFIER)*)? RPERAM
-						(ARROW expr)
-					|	(NEWLINE statements RCURLYBRACKET)
+for-expr			:	KEYWORD:FOR IDENTIFIER EQ expr KEYWORD:TO expr (KEYWORD:STEP expr)? KEYWORD:THEN loop-body
+
+while-expr			:	KEYWORD:WHILE expr KEYWORD:THEN loop-body
+
+loop-body			:	statement
+					:	NEWLINE statements RCURLYBRACKET

@@ -1,5 +1,7 @@
 #include "Parser.hpp"
 #include <algorithm>
+#include <fmt/core.h>
+#include <fmt/color.h>
 
 Parser::Parser(std::vector<Token> tokens)
 {
@@ -41,7 +43,7 @@ ParseResult Parser::Parse()
 	//std::cout << "Parse!" << std::endl;
 	ParseResult res = Statements();
 	if (!res.HasError() && currentToken.GetType() != TT_EOF)
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '+', '-', '*' or '/'"));
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected a statement or end of file, got '" + currentToken.GetType() + "'"));
 	return res;
 }
 
@@ -112,12 +114,32 @@ ParseResult Parser::Statement()
 
 	if (currentToken.Matches(TT_KEYWORD, "return"))
 	{
+		Token returnTok = currentToken;
+
 		Advance();
 		res.RegisterAdvancement();
 
-		std::optional<std::shared_ptr<Node>> expr = res.TryRegister(Expr());
-		if (!expr.has_value())
-			Reverse(res.GetToReverseCount());
+		// 'return' carries a value unless the statement ends right here
+		const bool hasValue = !(currentToken.GetType() == TT_NEWLINE || currentToken.GetType() == TT_RCURLYBRACKET || currentToken.GetType() == TT_EOF
+								|| currentToken.Matches(TT_KEYWORD, "else") || currentToken.Matches(TT_KEYWORD, "elif"));
+
+		if (m_returnTypeStack.empty())
+			return res.Failure(std::make_unique<InvalidSyntaxError>(returnTok.GetPosStart(), returnTok.GetPosEnd(), "'return' is only allowed inside a method"));
+
+		const std::string& declared = m_returnTypeStack.back();
+		if (declared == "void" && hasValue)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(returnTok.GetPosStart(), returnTok.GetPosEnd(), "This method has no return type (': void') and can not return a value. Declare ': type' or ': var'"));
+		if (declared != "void" && declared != "var" && !hasValue)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(returnTok.GetPosStart(), returnTok.GetPosEnd(), "This method returns '" + declared + "', so 'return' needs a value"));
+
+		std::optional<std::shared_ptr<Node>> expr = std::nullopt;
+		if (hasValue)
+		{
+			expr = res.Register(Expr());
+			if (res.HasError())
+				return res; // a broken return expression is reported as it is, not turned into a bare 'return'
+		}
+
 		return res.Success(std::make_unique<ReturnNode>(expr, posStart, currentToken.GetPosEnd().Copy()));
 	}
 
@@ -148,9 +170,10 @@ ParseResult Parser::Statement()
 	        attrRes.RegisterAdvancement();
 	    }
 
-	    if (!attrRes.HasError() && (currentToken.Matches(TT_KEYWORD, "func") || currentToken.Matches(TT_KEYWORD, "struct")))
+		const bool isStruct = currentToken.Matches(TT_KEYWORD, "struct");
+	    if (!attrRes.HasError() && (isStruct || IsMethodDeclStart()))
 	    {
-	        std::shared_ptr<Node> def = res.Register(currentToken.Matches(TT_KEYWORD, "func") ? FuncDef() : StructDef());
+	        std::shared_ptr<Node> def = res.Register(isStruct ? StructDef() : FuncDef());
 	        if (res.HasError())
 	            return res;
 
@@ -174,6 +197,15 @@ ParseResult Parser::Statement()
 			return res;
 
 		return res.Success(importStatement);
+	}
+
+	if (IsMethodDeclStart())
+	{
+		std::shared_ptr<Node> funcDef = res.Register(FuncDef());
+		if (res.HasError())
+			return res;
+
+		return res.Success(funcDef);
 	}
 
 	std::shared_ptr<Node> expr = res.Register(Expr());
@@ -331,6 +363,7 @@ ParseResult Parser::Expr()
 
 		// check if var type is validly typed
 		std::string strictVarType = "";
+		if (!currentToken.HasValue()) return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Variable datatype can not be nothing")); // fail save
 		if (std::holds_alternative<std::string>(currentToken.GetValue()))
 		{
 			strictVarType = std::get<std::string>(currentToken.GetValue());
@@ -343,32 +376,10 @@ ParseResult Parser::Expr()
 		Advance();
 		res.RegisterAdvancement();
 
-		// check if datatype is a list
-		if (currentToken.GetType() == TT_LSQUARE)
-		{
-			Advance();
-			res.RegisterAdvancement();
-
-			bool dynamicSize = false;
-			int fixedSize = 0;
-			if (currentToken.Matches(TT_KEYWORD, "dyn"))
-				dynamicSize = true;
-			else if (currentToken.GetType() == TT_INT)
-				fixedSize = std::get<int>(currentToken.GetValue());
-			else
-				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "List size must be a <number> as integer or 'dyn'"));
-
-			Advance();
-			res.RegisterAdvancement();
-
-			if (currentToken.GetType() != TT_RSQUARE)
-				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']'"));
-
-			strictVarType += "[" + (dynamicSize ? std::string("dyn") : std::to_string(fixedSize)) + "]";
-
-			Advance();
-			res.RegisterAdvancement();
-		}
+		// check for list
+		res.Register(ArraySuffix(strictVarType));
+		if (res.HasError())
+			return res;
 		
 		if (currentToken.GetType() == TT_EQ)
 		{
@@ -675,7 +686,7 @@ ParseResult Parser::Atom()
 	}
 	else if (tok.Matches(TT_KEYWORD, "func"))
 	{
-		std::shared_ptr<Node> funcDef = res.Register(FuncDef());
+		std::shared_ptr<Node> funcDef = res.Register(FuncDef(true));
 		if (res.HasError())
 			return res;
 		return res.Success(funcDef);
@@ -775,6 +786,39 @@ ParseResult Parser::IndexAssignStatement()
 
 	std::shared_ptr<Node> listNode = std::make_shared<VarAccessNode>(varName, std::nullopt);
 	return res.Success(std::make_shared<IndexAssignNode>(listNode, indexExpr, valueExpr, posStart, currentToken.GetPosEnd().Copy()));
+}
+
+ParseResult Parser::ArraySuffix(std::string &typeName)
+{
+    ParseResult res;
+
+	if (currentToken.GetType() != TT_LSQUARE)
+		return res.Success(nullptr);
+
+	Advance();
+	res.RegisterAdvancement();
+
+	bool dynamicSize = false;
+	int fixedSize = 0;
+	if (currentToken.Matches(TT_KEYWORD, "dyn"))
+		dynamicSize = true;
+	else if (currentToken.GetType() == TT_INT)
+		fixedSize = std::get<int>(currentToken.GetValue());
+	else
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Array size must be a <number> as integer or 'dyn'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_RSQUARE)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ']'"));
+
+	typeName += "[" + (dynamicSize ? std::string("dyn") : std::to_string(fixedSize)) + "]";
+
+	Advance();
+	res.RegisterAdvancement();
+
+	return res.Success(nullptr);
 }
 
 ParseResult Parser::IfExpr()
@@ -903,7 +947,7 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 		if (currentToken.GetType() == TT_RCURLYBRACKET)
 		{
 			hasBodyContent = false;
-			std::cout << "Warning(l." << currentToken.GetPosStart().GetLineNumber() << "): If statement has empty body\n";
+			PrintWarning("Warning(l." + std::to_string(currentToken.GetPosStart().GetLineNumber()) + "): If statement has empty body\n");
 		}
 
 		if (hasBodyContent)
@@ -1086,116 +1130,141 @@ ParseResult Parser::WhileExpr()
 	return res.Success(std::make_shared<WhileNode>(condition, body, false));
 }
 
-ParseResult Parser::FuncDef()
+ParseResult Parser::FuncDef(bool anonymous)
 {
 	ParseResult res;
-
-	if (!currentToken.Matches(TT_KEYWORD, "func"))
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'func'"));
-
-	Advance();
-	res.RegisterAdvancement();
+	const int headerLine = currentToken.GetPosStart().GetLineNumber();
 
 	std::optional<Token> varNameTok;
-	if (currentToken.GetType() == TT_IDENTIFIER)
+
+	if (anonymous)
 	{
+		if (!currentToken.Matches(TT_KEYWORD, "func"))
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'func'"));
+
+		Advance();
+		res.RegisterAdvancement();
+
+		if (currentToken.GetType() == TT_IDENTIFIER)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "'func' is only for anonymous methods. Declare named methods as 'name(params) : type'"));
+	}
+	else
+	{
+		if (currentToken.GetType() != TT_IDENTIFIER)
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected method name"));
+
 		varNameTok = currentToken;
 
 		Advance();
 		res.RegisterAdvancement();
-
-		if (currentToken.GetType() != TT_LPAREN)
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '('"));
 	}
-	else
-	{
-		varNameTok = std::nullopt;
 
-		if (currentToken.GetType() != TT_LPAREN)
-			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier or '('"));
-	}
+	if (currentToken.GetType() != TT_LPAREN)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '('"));
 
 	Advance();
 	res.RegisterAdvancement();
 	
-	bool argByReference = false;
 	std::vector<ArgNameToken> argNameToks;
 
-	if (currentToken.Matches(TT_KEYWORD, "ref"))
+	if (currentToken.GetType() != TT_RPAREN)
 	{
-		argByReference = true;
-
-		Advance();
-		res.RegisterAdvancement();
-	}
-
-	if (currentToken.GetType() == TT_IDENTIFIER)
-	{
-		argNameToks.push_back(ArgNameToken(currentToken, argByReference));
-
-		Advance();
-		res.RegisterAdvancement();
+		ArgNameToken firstArg(Token(), false, "", nullptr);
+		res.Register(FuncArg(firstArg));
+		if (res.HasError())
+			return res;
+		argNameToks.push_back(firstArg);
 
 		while (currentToken.GetType() == TT_COMMA)
 		{
 			Advance();
 			res.RegisterAdvancement();
 
-			argByReference = false;
-
-			if (currentToken.Matches(TT_KEYWORD, "ref"))
-			{
-				argByReference = true;
-
-				Advance();
-				res.RegisterAdvancement();
-			}
-
-			if (currentToken.GetType() != TT_IDENTIFIER)
-				return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
-
-			argNameToks.push_back(ArgNameToken(currentToken, argByReference));
-
-			Advance();
-			res.RegisterAdvancement();
+			ArgNameToken nextArg(Token(), false, "", nullptr);
+			res.Register(FuncArg(nextArg));
+			if (res.HasError())
+				return res;
+			argNameToks.push_back(nextArg);
 		}
 
 		if (currentToken.GetType() != TT_RPAREN)
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ',' or ')'"));
-
-		Advance();
-		res.RegisterAdvancement();
 	}
-	else if (currentToken.GetType() == TT_RPAREN)
-	{
-		Advance();
-		res.RegisterAdvancement();
-	}
-	else
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier or ')'"));
-
-	if (currentToken.GetType() == TT_ARROW)
-	{
-		Advance();
-		res.RegisterAdvancement();
-
-		std::shared_ptr<Node> nodeToReturn = res.Register(Expr());
-		if (res.HasError())
-			return res;
-
-		return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, nodeToReturn, true));
-	}
-	
-	if (currentToken.GetType() != TT_NEWLINE)
-		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '->' or NEWLINE"));
 
 	Advance();
 	res.RegisterAdvancement();
 
-	std::optional<std::shared_ptr<Node>> body = std::nullopt;
-	body = res.TryRegister(Statements());
-	if (body.has_value() && res.HasError())
-		return res;
+	const std::string methodName = varNameTok.has_value() ? std::get<std::string>(varNameTok->GetValue()) : "<anonymous>";
+
+	// ': type' strict, ': var' compiler guesses, nothing = ': void' + warning
+	std::string returnTypeName;
+	if (currentToken.GetType() == TT_COLON) // check return type
+	{
+		Advance();
+		res.RegisterAdvancement();
+
+		if (!std::holds_alternative<std::string>(currentToken.GetValue()) || std::get<std::string>(currentToken.GetValue()).empty())
+			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected a return type after ':' (a type, 'var' to let the compiler guess, or 'void')"));
+
+		returnTypeName = std::get<std::string>(currentToken.GetValue());
+
+		Advance();
+		res.RegisterAdvancement();
+
+		// allow an array suffix
+		res.Register(ArraySuffix(returnTypeName));
+    	if (res.HasError())
+        	return res;
+	}
+	else
+	{
+		returnTypeName = "void";
+		PrintWarning("Warning(l." + std::to_string(headerLine) + "): method '" + methodName + "' has no return type and is treated as ': void'\n");
+	}
+
+	const bool isProcedure = (returnTypeName == "void");
+
+	// 'return' statements inside the body are checked against this
+	m_returnTypeStack.push_back(returnTypeName);
+	struct PopGuard { std::vector<std::string>& stack; ~PopGuard() { stack.pop_back(); } } popGuard{ m_returnTypeStack };
+
+	if (currentToken.GetType() == TT_ARROW) // one-liner method, return its expression, unless it's a procedure
+	{
+		Advance();
+		res.RegisterAdvancement();
+
+		// body is the node to return
+		std::shared_ptr<Node> body = res.Register(Expr()); // body
+		if (res.HasError())
+			return res;
+
+		return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, returnTypeName, body, !isProcedure));
+	}
+	
+	if (currentToken.GetType() != TT_NEWLINE)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '->' or NEWLINE after the method header. Got: '" + currentToken.GetType() + "'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	while (currentToken.GetType() == TT_NEWLINE)
+	{
+		Advance();
+		res.RegisterAdvancement();
+	}
+
+	// An empty body is allowed
+	std::shared_ptr<Node> body = nullptr;
+
+	if (currentToken.GetType() == TT_EOF)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '}' to close method '" + methodName + "'"));
+
+	if (currentToken.GetType() != TT_RCURLYBRACKET)
+	{
+		body = res.Register(Statements());
+		if (res.HasError())
+			return res;
+	}
 
 	if (currentToken.GetType() != TT_RCURLYBRACKET)
 		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '}'"));
@@ -1203,7 +1272,80 @@ ParseResult Parser::FuncDef()
 	Advance();
 	res.RegisterAdvancement();
 
-	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, body.has_value() ? body.value() : nullptr, false));
+	return res.Success(std::make_shared<FuncDefNode>(varNameTok, argNameToks, returnTypeName, body, false));
+}
+
+// "[ref] name : type [= default]" parameter
+ParseResult Parser::FuncArg(ArgNameToken &outArg)
+{
+    ParseResult res;
+	bool argByReference = false;
+
+	if (currentToken.Matches(TT_KEYWORD, "ref"))
+	{
+		argByReference = true;
+		Advance();
+		res.RegisterAdvancement();
+	}
+
+	if (currentToken.GetType() != TT_IDENTIFIER)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected parameter name"));
+
+	Token argNameTok = currentToken;
+	Advance();
+	res.RegisterAdvancement();
+
+	if (currentToken.GetType() != TT_COLON)
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected ':' - parameters must be typed, e.g. '" + std::get<std::string>(argNameTok.GetValue()) + " : string'"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	if (!std::holds_alternative<std::string>(currentToken.GetValue()))
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected a parameter type"));
+
+	std::string typeName = std::get<std::string>(currentToken.GetValue());
+	if (typeName.empty())
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Parameter type can not be nothing"));
+
+	Advance();
+	res.RegisterAdvancement();
+
+	// check for list
+	res.Register(ArraySuffix(typeName));
+	if (res.HasError())
+		return res;
+
+	std::shared_ptr<Node> defaultValueNode = nullptr;
+	if (currentToken.GetType() == TT_EQ)
+	{
+		Advance();
+		res.RegisterAdvancement();
+
+		defaultValueNode = res.Register(Expr());
+		if (res.HasError())
+			return res;
+	}
+
+	outArg = ArgNameToken(argNameTok, argByReference, typeName, defaultValueNode);
+	return res.Success(nullptr);
+}
+
+// "funcName(", starts a method declaration, not a call, when it is followed by something only a parameter list has
+bool Parser::IsMethodDeclStart()
+{
+    if (currentToken.GetType() != TT_IDENTIFIER || Peek(1).GetType() != TT_LPAREN)
+		return false;
+
+	Token first = Peek(2);
+
+	if (first.GetType() == TT_RPAREN) // 'name()' is only a declaration when ':' or '->' follows
+		return Peek(3).GetType() == TT_COLON || Peek(3).GetType() == TT_ARROW;
+
+	if (first.Matches(TT_KEYWORD, "ref"))
+		return true;
+
+	return first.GetType() == TT_IDENTIFIER && Peek(3).GetType() == TT_COLON;
 }
 
 ParseResult Parser::StructDef()
@@ -1211,7 +1353,7 @@ ParseResult Parser::StructDef()
 	ParseResult res;
 
 	if (!currentToken.Matches(TT_KEYWORD, "struct"))
-		res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'struct'"));
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected 'struct'"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -1220,7 +1362,7 @@ ParseResult Parser::StructDef()
 	if (currentToken.GetType() == TT_IDENTIFIER)
 		varNameTok = currentToken;
 	else
-		res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
+		return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected identifier"));
 
 	Advance();
 	res.RegisterAdvancement();
@@ -1282,7 +1424,7 @@ ParseResult Parser::AttributeList()
 
     auto parseOne = [&]() -> bool
     {
-        if (currentToken.GetType() != TT_IDENTIFIER)
+        if (currentToken.GetType() != TT_STRING && currentToken.GetType() != TT_IDENTIFIER)
             return false;
 
         std::string attrName = std::get<std::string>(currentToken.GetValue());
@@ -1393,6 +1535,11 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::
 	}
 
 	return res.Success(left);
+}
+
+void Parser::PrintWarning(std::string warning)
+{
+	fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, warning);
 }
 
 std::shared_ptr<Node> ParseResult::Register(const ParseResult& res)

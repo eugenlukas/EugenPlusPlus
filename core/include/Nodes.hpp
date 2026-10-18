@@ -3,12 +3,17 @@
 #include <vector>
 #include <memory>
 
+class Node; // forward-declaration to use it above declaration
+
 struct ArgNameToken
 {
-	ArgNameToken(Token argNameTok, bool byReference) : argNameTok(argNameTok), byReference(byReference) {}
+	ArgNameToken(Token argNameTok, bool byReference, std::string typeName, std::shared_ptr<Node> defaultValueNode)
+		: argNameTok(argNameTok), byReference(byReference), typeName(std::move(typeName)), defaultValueNode(std::move(defaultValueNode)) {}
 
 	Token argNameTok;
 	bool byReference;
+	std::string typeName;
+	std::shared_ptr<Node> defaultValueNode; // nullptr = no default, paramseter is required
 };
 
 struct StructAttributeToken
@@ -89,7 +94,7 @@ public:
 	ListNode(std::vector<std::shared_ptr<Node>> elementNodes, Position posStart, Position posEnd);
 
 	std::string Repr() override;
-	std::vector<std::shared_ptr<Node>> GetElementNodes() { return elementNodes; }
+	const std::vector<std::shared_ptr<Node>>& GetElementNodes() const { return elementNodes; }
 
 private:
 	std::vector<std::shared_ptr<Node>> elementNodes;
@@ -218,16 +223,18 @@ private:
 class FuncDefNode : public Node
 {
 public:
-	FuncDefNode(std::optional<Token> varNameTok, std::vector<ArgNameToken> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn);
+	FuncDefNode(std::optional<Token> varNameTok, std::vector<ArgNameToken> argNameToks, std::optional<std::string> returnTypeName, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn);
 
 	std::string Repr() override;
 	std::optional<Token> GetVarNameTok() { return varNameTok; }
-	std::vector<ArgNameToken> ArgNameToks() { return argNameToks; }
+	const std::vector<ArgNameToken>& ArgNameToks() const { return argNameToks; }
 	std::shared_ptr<Node> GetBodyNode() { return bodyNode; }
 	bool GetShouldAutoReturn() const { return shouldAutoReturn; }
 
 	void SetAttributes(std::vector<FuncAttribute> attrs) { attributes = std::move(attrs); }
 	const std::vector<FuncAttribute>& GetAttributes() const { return attributes; }
+
+	const std::optional<std::string>& GetReturnTypeName() const { return returnTypeName; }
 
 private:
 	std::optional<Token> varNameTok;
@@ -236,6 +243,7 @@ private:
 	bool shouldAutoReturn;
 
 	std::vector<FuncAttribute> attributes;
+	std::optional<std::string> returnTypeName;
 };
 
 class CallNode : public Node
@@ -245,7 +253,7 @@ public:
 
 	std::string Repr() override;
 	std::shared_ptr<Node> GetNodeToCall() { return nodeToCall; }
-	std::vector<std::shared_ptr<Node>> GetArgNodes() { return argNodes; }
+	const std::vector<std::shared_ptr<Node>>& GetArgNodes() const { return argNodes; }
 
 private:
 	std::shared_ptr<Node> nodeToCall;
@@ -361,7 +369,7 @@ public:
 
 	std::string Repr() override;
 	Token GetVarNameTok() { return varNameTok; }
-	std::vector<StructAttributeToken> GetAttributeToks() { return attributeToks; }
+	const std::vector<StructAttributeToken>& GetAttributeToks() const { return attributeToks; }
 
 private:
 	Token varNameTok;

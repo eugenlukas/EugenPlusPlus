@@ -2,10 +2,11 @@
 #include <iostream>
 #include <vector>
 #include "Token.hpp"
-#include "Interpreter.hpp"
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
+#include <fmt/core.h>
+#include <fmt/color.h>
 #ifdef __linux__
         #include <unistd.h>
         #include <limits.h>
@@ -63,6 +64,7 @@ public:
         return result;
     }
 
+    /* old interpreter code
     static std::string Print(RTResult result)
     {
         if (result.GetValue().has_value())
@@ -112,13 +114,16 @@ public:
         else
             return "";
     }
+    */
 
-    static std::string GetErrorString(Error* const & error)
+    static void PrintErrorString(Error* const & error)
     {
-        std::string result = "File " + error->GetPosStart().GetFileName() + ", line " + std::to_string(error->GetPosStart().GetLineNumber() + 1);
-	    result += "\n" + error->GetErrorName() + ": " + error->GetErrorDetails();
-	    result += "\n\n" + Helper::StringWithArrows(error->GetPosStart().GetFileContent(), error->GetPosStart(), error->GetPosEnd());
-	    return result;
+        std::string errorNote = "File " + error->GetPosStart().GetFileName() + ", line " + std::to_string(error->GetPosStart().GetLineNumber() + 1);
+	    errorNote += "\n" + error->GetErrorName() + ": " + error->GetErrorDetails() + "\n";
+	    std::string codePreview = "\n" + Helper::StringWithArrows(error->GetPosStart().GetFileContent(), error->GetPosStart(), error->GetPosEnd());
+
+        fmt::print(stderr, fmt::fg(fmt::color::indian_red) | fmt::emphasis::bold, errorNote);
+        std::cout << codePreview << "\n";
     }
 
     static bool argv_has(int argc, char* argv[], const std::string& target)

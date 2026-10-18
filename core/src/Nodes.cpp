@@ -175,10 +175,11 @@ std::string WhileNode::Repr()
 	return "while node";
 }
 
-FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<ArgNameToken> argNameToks, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn)
+FuncDefNode::FuncDefNode(std::optional<Token> varNameTok, std::vector<ArgNameToken> argNameToks, std::optional<std::string> returnTypeName, std::shared_ptr<Node> bodyNode, bool shouldAutoReturn)
 {
 	this->varNameTok = varNameTok;
 	this->argNameToks = argNameToks;
+	this->returnTypeName = returnTypeName;
 	this->bodyNode = bodyNode;
 	this->shouldAutoReturn = shouldAutoReturn;
 

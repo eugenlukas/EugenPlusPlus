@@ -52,6 +52,7 @@ make
 <li>cmake</li>
 <li>g++/clang++</li>
 <li>llvm</li>
+<li>fmt</li>
 </ul>
 
 <h3>Dpendencies for building the vscode-extension</h3>

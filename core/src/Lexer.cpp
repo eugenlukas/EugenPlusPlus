@@ -21,6 +21,14 @@ void Lexer::Advance()
 		current_char = '\0';
 }
 
+char Lexer::Peek()
+{
+    size_t nextIdx = pos.GetIdx() + 1;
+    if (nextIdx < text.length())
+        return text[nextIdx];
+    return '\0';
+}
+
 MakeTokensResult Lexer::MakeTokens()
 {
 	std::vector<Token> tokens;
@@ -406,12 +414,12 @@ std::optional<Token> Lexer::makeDivOrComment()
 std::optional<Token> Lexer::makeDblConon()
 {
 	Position posStart = pos.Copy();
-	Advance();
 
-	if (current_char != ':')
+	if (Peek() != ':')
 		return std::nullopt;
 
-	Advance();
+	Advance(); // first :
+	Advance(); // second :
 
 	return Token(TT_DBLCOLON, std::nullopt, posStart, pos);
 }

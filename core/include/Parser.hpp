@@ -93,6 +93,7 @@ public:
 	ParseResult Atom();
 	ParseResult ListExpr();
 	ParseResult IndexAssignStatement();
+	ParseResult ArraySuffix(std::string& typeName);
 	ParseResult IfExpr();
 	ParseResult IfExprB();
 	ParseResult IfExprC(std::shared_ptr<IfCase>& outElseCase);
@@ -100,7 +101,9 @@ public:
 	ParseResult IfExprCases(std::string caseKeyword, CasesResult& outResult);
 	ParseResult ForExpr();
 	ParseResult WhileExpr();
-	ParseResult FuncDef();
+	ParseResult FuncDef(bool anonymous = false);
+	ParseResult FuncArg(ArgNameToken& outArg);
+	bool IsMethodDeclStart();
 	ParseResult StructDef();
 	ParseResult AttributeList();
 
@@ -110,6 +113,10 @@ public:
 private:
 	std::vector<Token> tokens;
 	std::vector<FuncAttribute> m_pendingAttributes;
+	std::vector<std::string> m_returnTypeStack;
 	int tokIdx = -1;
 	Token currentToken;
+
+private:
+	void PrintWarning(std::string warning);
 };

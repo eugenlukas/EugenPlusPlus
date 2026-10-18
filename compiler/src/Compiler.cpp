@@ -6,13 +6,36 @@
 #include <sstream>
 #include <filesystem>
 
-void Compiler::GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR)
+bool Compiler::GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR)
 {
     // Compile root node
     CompileNode(rootNode);
 
+    if (m_hadError)
+    {
+        if (dumpIR)
+            module->print(llvm::outs(), nullptr);
+        return false;
+    }
+
+    // Catch invalid IR
+    std::string verifyLog;
+    llvm::raw_string_ostream verifyStream(verifyLog);
+    bool isBroken = llvm::verifyModule(*module, &verifyStream);
+
+    // Dump generated IR
     if (dumpIR)
         module->print(llvm::outs(), nullptr);
+
+    // Print catched IR errors
+    if (isBroken)
+    {
+        verifyStream.flush();
+        fmt::print(fmt::fg(fmt::color::indian_red) | fmt::emphasis::bold, "LLVM module verification failed:\n" + verifyLog + "\n");
+        return false;
+    }
+
+    return true;
 }
 
 void Compiler::EmitObjectFile(const std::string& filename)
@@ -109,6 +132,15 @@ void Compiler::LinkObjectFile(const std::string &filepath, const std::string& fi
 
 llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
 {
+    // outside a function only declarations are allowed, anything else would crash the compiler or corrupt the IR
+    if (node && !m_functionScopeBase && !dynamic_cast<ListNode*>(node.get()) && !dynamic_cast<FuncDefNode*>(node.get())
+        && !dynamic_cast<StructDefNode*>(node.get()) && !dynamic_cast<ModuleNode*>(node.get())
+        && !dynamic_cast<LinkNode*>(node.get()) && !dynamic_cast<ExternNode*>(node.get()))
+    {
+        Error("Top-level statement is not allowed outside a function: {}\nOnly 'func', 'struct', '#module', '#link' and '#extern' declarations can appear at top level\n", node->Repr());
+        return nullptr;
+    }
+
     if (auto n = dynamic_cast<NumberNode*>(node.get()))
         return Compile_NumberNode(n);
 
@@ -173,9 +205,9 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
         return Compile_StructDefNode(n);
 
     if (node.get() != nullptr)
-        std::cerr << "Unknown node type '" << typeid(*node.get()).name() << "'\n";
+        Error("Unknown node type '{}'\n", typeid(*node.get()).name());
     else
-        std::cout << "Warning: Node type to compile was null\n";
+        fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, "Warning: Node type to compile was null\n");
     return nullptr;
 }
 
@@ -189,7 +221,7 @@ llvm::Value *Compiler::Compile_NumberNode(NumberNode* node)
     if (std::holds_alternative<double>(val))
         return llvm::ConstantFP::get(builder.getDoubleTy(), std::get<double>(val));
 
-    std::cerr << "Compile_NumberNode: token holds neither int nor double\n";
+    Error("Compile_NumberNode: token holds neither int nor double\n");
     return llvm::ConstantInt::get(builder.getInt32Ty(), 0);
 }
 
@@ -219,7 +251,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
 
     if (!listNode)
     {
-        std::cerr << "Array variable '" << name << "' must be initialized with a list literal\n";
+        Error("Array variable '{}' must be initialized with a list literal\n", name);
         return nullptr;
     }
 
@@ -233,7 +265,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
     {
         if (count == 0)
         {
-            std::cerr << "Cannot infer the type of an empty list literal for '" << name << "'; declare an explicit type, e.g. 'name : int[dyn] = []'\n";
+            Error("Cannot infer the type of an empty list literal for '{}'; declare an explicit type, e.g. 'name : int[dyn] = []'\n", name);
             return nullptr;
         }
 
@@ -247,8 +279,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
 
     if (!info.isDynamic && count != info.fixedSize)
     {
-        std::cerr << "Array '" << name << "' declared with size " << info.fixedSize
-                   << " but initializer has " << count << " element(s)\n";
+        Error("Array '{}' declared with size {} but initializer has {} element(s)\n", name, info.fixedSize, count);
         return nullptr;
     }
 
@@ -260,15 +291,13 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
 
     if (!node->GetIsDeclaration() && !existing)
     {
-        std::cerr << "Variable '" << name << "' used before declaration; declare it with 'name : "
-                   << (info.isDynamic ? (info.elementTypeName + "[dyn]") : (info.elementTypeName + "[" + std::to_string(length) + "]"))
-                   << " = [...]'\n";
+        Error("Variable '{}' used before declaration; declare it with 'name : {} = [...]'\n", name, (info.isDynamic ? (info.elementTypeName + "[dyn]") : (info.elementTypeName + "[" + std::to_string(length) + "]")));
         return nullptr;
     }
 
     if (existing && !existingIsArray)
     {
-        std::cerr << "Type mismatch: variable '" << name << "' is not an array\n";
+        Error("Type mismatch: variable '{}' is not an array\n", name);
         return nullptr;
     }
 
@@ -282,7 +311,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
 
         if (oldInfo.elementType != info.elementType || oldInfo.isDynamic != info.isDynamic)
         {
-            std::cerr << "Type mismatch: array '" << name << "' cannot change element type or dyn/fixed-ness on reassignment\n";
+            Error("Type mismatch: array '{}' cannot change element type or dyn/fixed-ness on reassignment\n", name);
             return nullptr;
         }
 
@@ -290,8 +319,7 @@ llvm::Value *Compiler::Compile_ArrayDeclaration(VarAssignNode *node, const std::
         {
             if (oldInfo.length != length)
             {
-                std::cerr << "Array '" << name << "' is a fixed size of " << oldInfo.length
-                           << " and cannot be resized to " << length << " by reassignment\n";
+                Error("Array '{}' is a fixed size of {} and cannot be resized to {} by reassignment\n", name, oldInfo.length, length);
                 return nullptr;
             }
 
@@ -371,7 +399,7 @@ llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
     auto* va = dynamic_cast<VarAccessNode*>(node->GetListNode().get());
     if (!va || va->GetIsNamespaced())
     {
-        std::cerr << "Chained/nested indexing is not yet supported\n";
+        Error("Chained/nested indexing is not yet supported\n");
         return nullptr;
     }
 
@@ -380,7 +408,7 @@ llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
     VarInfo* var = FindVariable(name);
     if (!var)
     {
-        std::cerr << "Index access error: '" << name << "' is not a known variable\n";
+        Error("Index access error: '{}' is not a known variable\n", name);
         return nullptr;
     }
 
@@ -421,7 +449,7 @@ llvm::Value *Compiler::Compile_IndexGetNode(IndexGetNode *node)
         return builder.CreateLoad(builder.getInt8Ty(), charPtr, name + "Char");
     }
 
-    std::cerr << "Index access error: '" << name << "' is not a known array or string variable\n";
+    Error("Index access error: '{}' is not a known array or string variable\n", name);
     return nullptr;
 }
 
@@ -430,7 +458,7 @@ llvm::Value *Compiler::Compile_IndexAssignNode(IndexAssignNode *node)
     auto* va = dynamic_cast<VarAccessNode*>(node->GetListNode().get());
     if (!va || va->GetIsNamespaced())
     {
-        std::cerr << "Chained/nested index assignment is not yet supported\n";
+        Error("Chained/nested index assignment is not yet supported\n");
         return nullptr;
     }
 
@@ -441,9 +469,9 @@ llvm::Value *Compiler::Compile_IndexAssignNode(IndexAssignNode *node)
     if (!var || arrIt == m_arrays.end())
     {
         if (var && var->alloca->getAllocatedType() == builder.getInt8Ty()->getPointerTo() && !m_structs.IsStructVar(name))
-            std::cerr << "Index assignment error: '" << name << "' is a string, individual characters can't be assigned\n";
+            Error("Index assignment error: '{}' is a string, individual characters can't be assigned\n", name);
         else
-            std::cerr << "Index assignment error: '" << name << "' is not a known array variable\n";
+            Error("Index assignment error: '{}' is not a known array variable\n", name);
         return nullptr;
     }
 
@@ -472,7 +500,7 @@ llvm::Value *Compiler::Compile_IndexAssignNode(IndexAssignNode *node)
 
     if (value->getType() != info.elementType)
     {
-        std::cerr << "Type mismatch assigning into array '" << name << "'\n";
+        Error("Type mismatch assigning into array '{}'\n", name);
         return nullptr;
     }
 
@@ -546,7 +574,7 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
             return builder.CreateZExt(result, builder.getInt32Ty(), "boolTmp");
         }
 
-        std::cerr << "Unsupported binary operation '" << node->GetOpToken().Repr() << "' for two numbers\n";
+        Error("Unsupported binary operation '{}' for two numbers\n", node->GetOpToken().Repr());
         return nullptr;
     }
 
@@ -569,7 +597,7 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
         if (op == TT_LTEQ)  return builder.CreateFCmpOLE(left, right, "lteTmp");
         if (op == TT_GTEQ)  return builder.CreateFCmpOGE(left, right, "gteTmp");
 
-        std::cerr << "Unsupported binary operation '" << op << "' for mixed int/float\n";
+        Error("Unsupported binary operation '{}' for mixed int/float\n", op);
         return nullptr;
     }
 
@@ -630,7 +658,7 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
             return val;
         }
 
-        std::cerr << "Unsupported binary operation '+' on type: '" << leftTyStr << "' and '" << rightTyStr << "'\n";
+        Error("Unsupported binary operation '+' on type: '{}' and '{}'\n", leftTyStr, rightTyStr);
         return nullptr;
     }
     if (op == TT_MUL)
@@ -648,7 +676,7 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
         if (strLit && numLit && std::holds_alternative<int>(numLit->GetToken().GetValue()))
         {
             int count = std::get<int>(numLit->GetToken().GetValue());
-            const std::string& piece = std::get<std::string>(strLit->GetToken().GetValue());
+            const std::string piece = std::get<std::string>(strLit->GetToken().GetValue());
 
             std::string folded;
             folded.reserve(count > 0 ? piece.size() * static_cast<size_t>(count) : 0);
@@ -728,11 +756,11 @@ llvm::Value *Compiler::Compile_BinOpNode(BinOpNode *node)
             return finalResult;
         }
 
-        std::cerr << "Unsupported binary operation 'MUL' on type: '" << leftTyStr << "' and '" << rightTyStr << "'\n";
+        Error("Unsupported binary operation 'MUL' on type: '{}' and '{}'\n", leftTyStr, rightTyStr);
         return nullptr;
     }
 
-    std::cerr << "Unknown binary operation: '" << op << "'\n";
+    Error("Unknown binary operation: '{}'\n", op);
     return nullptr;
 }
 
@@ -763,7 +791,7 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
             auto fieldsIt = m_structs.fields.find(structTypeName);
             if (fieldsIt == m_structs.fields.end())
             {
-                std::cerr << "VarAccess error: no fields for struct '" << structTypeName << "'\n";
+                Error("VarAccess error: no fields for struct '{}'\n", structTypeName);
                 return nullptr;
             }
 
@@ -780,7 +808,7 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
 
             if (fieldIdx < 0)
             {
-                std::cerr << "VarAccess error: Field '" << name << "' not found in struct '" << structTypeName << "'\n";
+                Error("VarAccess error: Field '{}' not found in struct '{}'\n", name, structTypeName);
                 return nullptr;
             }
 
@@ -788,7 +816,7 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
             VarInfo* var = FindVariable(namespaceName);
             if (!var)
             {
-                std::cerr << "VarAccess error: Struct variable '" << namespaceName << "' not found\n";
+                Error("VarAccess error: Struct variable '{}' not found\n", namespaceName);
                 return nullptr;
             }
 
@@ -812,14 +840,14 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
         auto modIt = m_modules.find(namespaceName);
         if (modIt == m_modules.end())
         {
-            std::cerr << "Module-variable access error: Module '" << namespaceName << "' not found\n";
+            Error("Module-variable access error: Module '{}' not found\n", namespaceName);
             return nullptr;
         }
 
         auto varIt = modIt->second.variables.find(name);
         if (varIt == modIt->second.variables.end())
         {
-            std::cerr << "Module-variable access error: '" << name << "' not found in module '" << namespaceName << "'\n";
+            Error("Module-variable access error: '{}' not found in module '{}'\n", name, namespaceName);
             return nullptr;
         }
 
@@ -831,7 +859,7 @@ llvm::Value *Compiler::Compile_VarAccessNode(VarAccessNode *node)
     VarInfo* var = FindVariable(name);
     if (!var)
     {
-        std::cerr << "Undefined variable: " << name << "\n";
+        Error("Undefined variable: {}\n", name);
         return nullptr;
     }
 
@@ -859,7 +887,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
 
         if (!m_structs.IsStructVar(ownerName))
         {
-            std::cerr << "VarAssign error: '" << ownerName << "' is not a struct variable\n";
+            Error("VarAssign error: '{}' is not a struct variable\n", ownerName);
             return nullptr;
         }
 
@@ -867,7 +895,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
         auto fieldsIt = m_structs.fields.find(structTypeName);
         if (fieldsIt == m_structs.fields.end())
         {
-            std::cerr << "VarAssign error: no fields for struct '" << structTypeName << "'\n";
+            Error("VarAssign error: no fields for struct '{}'\n", structTypeName);
             return nullptr;
         }
 
@@ -884,7 +912,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
 
         if (fieldIdx < 0)
         {
-            std::cerr << "VarAssign error: field '" << name << "' not found in struct '" << structTypeName << "'\n";
+            Error("VarAssign error: field '{}' not found in struct '{}'\n", name, structTypeName);
             return nullptr;
         }
 
@@ -895,7 +923,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
         VarInfo* ownerVar = FindVariable(ownerName);
         if (!ownerVar)
         {
-            std::cerr << "VarAssign error: variable '" << ownerName << "' not found\n";
+            Error("VarAssign error: variable '{}' not found\n", ownerName);
             return nullptr;
         }
 
@@ -941,7 +969,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     {
         if (!node->GetIsDeclaration() && !FindVariable(name))
         {
-            std::cerr << "Variable '" << name << "' used before declaration; declare it with 'name : var = [...]'\n";
+            Error("Variable '{}' used before declaration; declare it with 'name : var = [...]'\n", name);
             return nullptr;
         }
 
@@ -951,6 +979,47 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
         inferredInfo.fixedSize = 0;
 
         return Compile_ArrayDeclaration(node, name, inferredInfo);
+    }
+
+    // call to a local function that returns a '[dyn]' array: register the target variable as a tracked, heap-owned array
+    if (!node->GetIsNamespaced())
+    {
+        if (auto* callNode = dynamic_cast<CallNode*>(node->GetValueNode().get()))
+        {
+            if (auto* calleeVa = dynamic_cast<VarAccessNode*>(callNode->GetNodeToCall().get()); calleeVa && !calleeVa->GetIsNamespaced())
+            {
+                std::string calleeName = std::get<std::string>(calleeVa->GetVarNameToken().GetValue());
+                auto funcIt = m_functions.find(calleeName);
+                if (funcIt != m_functions.end() && funcIt->second.returnArrayInfo.has_value())
+                {
+                    const ArrayTypeInfo& retArrInfo = *funcIt->second.returnArrayInfo;
+                    llvm::AllocaInst* lengthAlloca = CreateEntryBlockAlloca(name + "Len", builder.getInt32Ty());
+
+                    std::vector<llvm::Value*> args;
+                    if (!Compile_CallArguments(funcIt->second.function, funcIt->second, calleeName, callNode, args))
+                        return nullptr;
+
+                    llvm::Value* resultPtr;
+                    if (retArrInfo.isDynamic)
+                    {
+                        args.push_back(lengthAlloca); // hidden __outLen
+                        resultPtr = builder.CreateCall(funcIt->second.function, args);
+                    }
+                    else
+                    {
+                        resultPtr = builder.CreateCall(funcIt->second.function, args);
+                        builder.CreateStore(builder.getInt32((uint32_t)retArrInfo.fixedSize), lengthAlloca);
+                    }
+
+                    llvm::AllocaInst* alloca = CreateEntryBlockAlloca(name, resultPtr->getType());
+                    builder.CreateStore(resultPtr, alloca);
+                    SetVariable(name, { alloca, retArrInfo.isDynamic });
+                    m_arrays[name] = { retArrInfo.elementType, true, retArrInfo.fixedSize, lengthAlloca, retArrInfo.elementTypeName };
+
+                    return resultPtr;
+                }
+            }
+        }
     }
 
     // struct instantiation (e.g. var red = Color)
@@ -965,7 +1034,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
 
                 if (!node->GetIsDeclaration() && !existing)
                 {
-                    std::cerr << "Variable '" << name << "' used before declaration; declare it with 'name : var = " << typeName << "'\n";
+                    Error("Variable '{}' used before declaration; declare it with 'name : var = {}'\n", name, typeName);
                     return nullptr;
                 }
             
@@ -976,7 +1045,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
                 {
                     if (existing->alloca->getAllocatedType() != structTy)
                     {
-                        std::cerr << "Type mismatch: variable '" << name << "' is not a '" << typeName << "'\n";
+                        Error("Type mismatch: variable '{}' is not a '{}'\n", name, typeName);
                         return nullptr;
                     }
                 
@@ -1000,16 +1069,22 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     llvm::Value* value = CompileNode(node->GetValueNode());
     if (!value) return nullptr;
 
+    if (value->getType()->isVoidTy())
+    {
+        Error("Can't assign '{}' to a variable: it calls a procedure (': void')\n", node->GetValueNode()->Repr());
+        return nullptr;
+    }
+
     // enforce strict type annotation
     std::string declaredTypeName = "";
     if (node->GetIsDeclaration() && node->GetStrictVarDatatype().has_value())
     {
         declaredTypeName = node->GetStrictVarDatatype().value();
-        llvm::Type* declaredTy = StringToLLVMType(declaredTypeName);
+        llvm::Type* declaredTy = TryStringToLLVMType(declaredTypeName);
 
         if (!declaredTy)
         {
-            std::cerr << "VarAssign error: unknown type '" << declaredTypeName << "' for variable '" << name << "'\n";
+            Error("VarAssign error: unknown type '{}' for variable '{}'\n", declaredTypeName, name);
             return nullptr;
         }
 
@@ -1020,14 +1095,14 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
                 auto str = std::get<std::string>(strLiteral->GetToken().GetValue());
                 if (str.size() > 1)
                 {
-                    std::cerr << "Type mismatch: variable '" << name << "' declared as 'char' but literal \"" << str << "\" has length " << str.size() << " (must be at most 1)\n";
+                    Error("Type mismatch: variable '{}' declared as 'char' but literal \"{}\" has length {} (must be at most 1)\n", name, str, str.size());
                     return nullptr;
                 }
                 value = builder.getInt8(str.empty() ? 0 : static_cast<uint8_t>(str[0]));
             }
             else if (value->getType() != declaredTy)
             {
-                std::cerr << "Type mismatch: variable '" << name << "' declared as 'char' but the assigned value is not a char\n";
+                Error("Type mismatch: variable '{}' declared as 'char' but the assigned value is not a char\n", name);
                 return nullptr;
             }
         }
@@ -1072,7 +1147,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
     {
         if (!node->GetIsDeclaration())
         {
-            std::cerr << "Variable '" << name << "' used before declaration; use 'name : type = expr' to declare it\n";
+            Error("Variable '{}' used before declaration; use 'name : type = expr' to declare it\n", name);
             return nullptr;
         }
         alloca = CreateEntryBlockAlloca(name, type);
@@ -1095,7 +1170,7 @@ llvm::Value *Compiler::Compile_VarAssignNode(VarAssignNode *node)
 
     if (alloca->getAllocatedType() != type)
     {
-        std::cerr << "Type mismatch for variable: '" << name << "'\n";
+        Error("Type mismatch for variable: '{}'\n", name);
         return nullptr;
     }
 
@@ -1130,7 +1205,7 @@ llvm::Value *Compiler::Compile_UnaryOpNode(UnaryOpNode *node)
             return builder.CreateIntCast(cmp, ty, false, "boolTmp");
         }
 
-        std::cerr << "Unknown unary integer operator\n";
+        Error("Unknown unary integer operator\n");
         return nullptr;
     }
 
@@ -1150,11 +1225,11 @@ llvm::Value *Compiler::Compile_UnaryOpNode(UnaryOpNode *node)
             return builder.CreateIntCast(cmp, builder.getInt32Ty(), false, "boolTmp");
         }
 
-        std::cerr << "Unknown unary float operator\n";
+        Error("Unknown unary float operator\n");
         return nullptr;
     }
 
-    std::cerr << "Unsupported unary operator for type\n";
+    Error("Unsupported unary operator for type\n");
     return nullptr;
 }
 
@@ -1275,7 +1350,7 @@ llvm::Value *Compiler::Compile_ForNode(ForNode *node)
             {
                 if (std::get<int>(val) == 0)
                 {
-                    std::cerr << "For loop step cannot be 0\n"; // would create infinite loop
+                    Error("For loop step cannot be 0\n"); // would create infinite loop
                     return nullptr;
                 }
 
@@ -1358,7 +1433,7 @@ llvm::Value *Compiler::Compile_WhileNode(WhileNode *node)
         cond = builder.CreateFCmpONE(condVal, llvm::ConstantFP::get(condVal->getType(), 0.0), "whilecond");
     else
     {
-        std::cerr << "Invalid while condition type\n";
+        Error("Invalid while condition type\n");
         return nullptr;
     }
 
@@ -1388,13 +1463,53 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 {
     if (!node->GetVarNameTok().has_value())
     {
-        std::cerr << "Anonymous functions not supported yet!\n";
+        Error("Codegen for anonymous functions not implemented yet!\n");
         return nullptr;
     }
 
     std::string name = std::get<std::string>(node->GetVarNameTok()->GetValue());
 
-    llvm::Type* returnType = InferenceReturnType(node->GetBodyNode(), node->GetShouldAutoReturn());
+    std::unordered_map<std::string, llvm::Type*> paramArrayElemTypes;
+    for (auto& argTok : node->ArgNameToks())
+    {
+        if (auto arrInfo = ParseArrayTypeName(argTok.typeName))
+            paramArrayElemTypes[std::get<std::string>(argTok.argNameTok.GetValue())] = arrInfo->elementType;
+    }
+
+    const std::string retTypeName = node->GetReturnTypeName().value_or("void");
+
+    llvm::Type* returnType = nullptr;
+    std::optional<ArrayTypeInfo> returnArrayInfo;
+
+    if (retTypeName == "void")
+        returnType = llvm::Type::getVoidTy(context);
+    else if (retTypeName == "var") // guess the return type
+        returnType = InferenceReturnType(node->GetBodyNode(), node->GetShouldAutoReturn(), paramArrayElemTypes);
+    else if (auto arrInfo = ParseArrayTypeName(retTypeName))
+    {
+        returnArrayInfo = arrInfo;
+        returnType = llvm::PointerType::get(arrInfo->elementType, 0);
+    }
+    else if (m_structs.HasType(retTypeName))
+        returnType = m_structs.types.at(retTypeName);
+    else
+    {
+        returnType = TryStringToLLVMType(retTypeName);
+        if (!returnType)
+        {
+            Error("func '{}': unknown return type '{}'\n", name, retTypeName);
+            return nullptr;
+        }
+    }
+
+    const bool isProcedure = returnType->isVoidTy();
+    const bool autoReturn = node->GetShouldAutoReturn() && !isProcedure;
+
+    // 'main' still gives an exit code to the system even with ': void'
+    if (isProcedure && (name == "main" || name == "Main"))
+        returnType = builder.getInt32Ty();
+
+    bool returnsDynArray = returnArrayInfo.has_value() && returnArrayInfo->isDynamic;
 
     // any struct-returning function uses a hidden pointer ("structRet") for its result, regardless of size
     llvm::StructType* structReturnStructTy = llvm::dyn_cast<llvm::StructType>(returnType);
@@ -1402,6 +1517,7 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     // scan the body for "param::field" usage to detect struct params
     std::vector<std::string> structParamTypes; // parallel to ArgNameToks; "" = not a struct
+    std::vector<std::optional<ArrayTypeInfo>> arrayParamTypes; // parallel to ArgNameToks; nullopt = not an array
     std::vector<llvm::Type*> argTypes;
 
     if (structReturnStructTy)
@@ -1409,16 +1525,65 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     for (auto& argTok : node->ArgNameToks())
     {
-        std::string paramName = std::get<std::string>(argTok.argNameTok.GetValue());
-        std::string structTypeName = ScanForStructParamUsage(paramName, node->GetBodyNode());
+        auto arrInfo = ParseArrayTypeName(argTok.typeName);
+        const bool isStructParam = !arrInfo && m_structs.HasType(argTok.typeName);
+        llvm::Type* valueTy = (!arrInfo && !isStructParam) ? TryStringToLLVMType(argTok.typeName) : nullptr;
 
-        structParamTypes.push_back(structTypeName);
+        if (argTok.byReference)
+        {
+            const bool numeric = valueTy && (valueTy->isIntegerTy() || valueTy->isFloatingPointTy());
+            if (!arrInfo && !isStructParam && !numeric)
+            {
+                Error("func '{}': 'ref' isn't supported for '{}' parameters (only numbers, bool, char, structs and arrays; a replaced string's ownership can't be tracked yet)\n", name, argTok.typeName);
+                return nullptr;
+            }
+            if (argTok.defaultValueNode)
+            {
+                Error("func '{}': a 'ref' parameter can't have a default value\n", name);
+                return nullptr;
+            }
+        }
 
-        if (!structTypeName.empty())
-            argTypes.push_back(llvm::PointerType::get(m_structs.types.at(structTypeName), 0));
+        if (arrInfo)
+        {
+            structParamTypes.push_back("");
+            arrayParamTypes.push_back(arrInfo);
+            argTypes.push_back(llvm::PointerType::get(arrInfo->elementType, 0));
+
+            // dynamic arrays carry their length at runtime, is passed as a hidden second LLVM parameter
+            if (arrInfo->isDynamic)
+            {
+                argTypes.push_back(builder.getInt32Ty()); // length, by value
+                if (argTok.byReference)
+                {
+                    // by-reference write-back targets: addresses of the CALLER's own buffer/length slots
+                    argTypes.push_back(llvm::PointerType::get(llvm::PointerType::get(arrInfo->elementType, 0), 0));
+                    argTypes.push_back(llvm::PointerType::get(builder.getInt32Ty(), 0));
+                }
+            }
+
+            continue;
+        }
+
+        arrayParamTypes.push_back(std::nullopt);
+        structParamTypes.push_back(isStructParam ? argTok.typeName : "");
+
+        if (isStructParam)
+            argTypes.push_back(llvm::PointerType::get(m_structs.types.at(argTok.typeName), 0));
         else
-            argTypes.push_back(builder.getInt32Ty());
+        {
+            if (!valueTy)
+            {
+                Error("func '{}': unknown parameter type '{}' for '{}'\n", name, argTok.typeName, std::get<std::string>(argTok.argNameTok.GetValue()));
+                return nullptr;
+            }
+            argTypes.push_back(argTok.byReference ? llvm::PointerType::get(valueTy, 0) : valueTy); // 'ref': address of the caller's variable
+        }
     }
+
+    // hidden trailing parameter, where the caller wants this function's returned array's final length written
+    if (returnsDynArray)
+        argTypes.push_back(llvm::PointerType::get(builder.getInt32Ty(), 0));
 
     llvm::FunctionType* funcType = llvm::FunctionType::get(llvmReturnType, argTypes, false);
     llvm::Function* func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, name, module.get());
@@ -1441,30 +1606,33 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
                 func->setName(attr.arg.value());
         }
         else
-            std::cerr << "Warning: unknow function attribute '" << attr.name << "'\n";
+            fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, "Warning: unknow function attribute '" + attr.name + "'\n");
     }
 
     if (structReturnStructTy)
         func->addParamAttr(0, llvm::Attribute::getWithStructRetType(context, structReturnStructTy));
 
-    m_functions[name] = func;
+    // record default-value expressions so calls with too few arguments can pull them in
+    std::vector<std::shared_ptr<Node>> defaults;
+    std::vector<std::string> paramTypeNames;
+    std::vector<bool> paramByRef;
+    for (auto& argTok : node->ArgNameToks())
+    {
+        defaults.push_back(argTok.defaultValueNode);
+        paramTypeNames.push_back(argTok.typeName);
+        paramByRef.push_back(argTok.byReference);
+    }
+    m_functions[name] = { func, std::move(defaults), std::move(paramTypeNames), std::move(paramByRef), returnArrayInfo };
 
     // Name arguments (the hidden structReturn pointer, if present, is always first and isn't in ArgNameToks)
     llvm::Value* structReturnPtr = nullptr;
-    int idx = 0;
-    bool first = true;
-    for (auto& arg : func->args())
+    auto rawArg = func->args().begin();
+
+    if (structReturnStructTy)
     {
-        if (structReturnStructTy && first)
-        {
-            structReturnPtr = &arg;
-            arg.setName("__sret");
-            first = false;
-            continue;
-        }
-        first = false;
-        arg.setName(std::get<std::string>(node->ArgNameToks()[idx].argNameTok.GetValue()));
-        idx++;
+        structReturnPtr = &(*rawArg);
+        rawArg->setName("__sret");
+        ++rawArg;
     }
 
     // Create entry
@@ -1474,28 +1642,92 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
 
     // New variable scope
     PushScope();
+    std::optional<size_t> savedFunctionScopeBase = m_functionScopeBase;
+    m_functionScopeBase = m_scopes.size() - 1;
 
     llvm::Value* savedStructRetPtr = m_currentStructRetPtr;
     m_currentStructRetPtr = structReturnPtr;
 
     // Store and allocate variables
+    std::vector<PendingWriteBack> savedWriteBacks = std::move(m_pendingWriteBacks);
+    m_pendingWriteBacks.clear();
+    llvm::Value* savedReturnLenOutSlot = m_currentReturnLenOutSlot;
+    m_currentReturnLenOutSlot = nullptr;
+
+    const std::vector<ArgNameToken> argToks = node->ArgNameToks();
+    for (size_t i = 0; i < argToks.size(); ++i)
     {
-        size_t i = 0;
-        for (auto& arg : func->args())
+        const auto& argTok = argToks[i];
+        const std::string paramName = std::get<std::string>(argTok.argNameTok.GetValue());
+        const bool byReference = argTok.byReference;
+        const bool scalarByRef = byReference && !arrayParamTypes[i].has_value() && structParamTypes[i].empty();
+
+        // a by-value [dyn] parameter is a heap copy made by the caller: this scope owns it and frees it on exit
+        const bool ownsBuffer = arrayParamTypes[i].has_value() && arrayParamTypes[i]->isDynamic && !byReference;
+
+        llvm::Argument& mainArg = *rawArg;
+        ++rawArg;
+        mainArg.setName(paramName);
+
+        if (scalarByRef)
         {
-            if (structReturnPtr == &arg)
-                continue;
-
-            llvm::AllocaInst* alloca = CreateEntryBlockAlloca(arg.getName().str(), arg.getType());
-            builder.CreateStore(&arg, alloca);
-            SetVariable(arg.getName().str(), { alloca, false });
-
-            // register struct-ptr params so param::field resolves during body compilation
-            if (i < structParamTypes.size() && ! structParamTypes[i].empty())
-                m_structs.varToType[arg.getName().str()] = structParamTypes[i];
-
-            ++i;
+            // copy-in now, copy-out before every return (see FlushPendingWriteBacks)
+            llvm::Type* valueTy = TryStringToLLVMType(argTok.typeName);
+            llvm::AllocaInst* local = CreateEntryBlockAlloca(paramName, valueTy);
+            builder.CreateStore(builder.CreateLoad(valueTy, &mainArg, paramName + "In"), local);
+            SetVariable(paramName, { local, false });
+            m_pendingWriteBacks.push_back({ local, &mainArg });
+            continue;
         }
+
+        llvm::AllocaInst* alloca = CreateEntryBlockAlloca(paramName, mainArg.getType());
+        builder.CreateStore(&mainArg, alloca);
+        SetVariable(paramName, { alloca, ownsBuffer });
+
+        if (arrayParamTypes[i].has_value())
+        {
+            const ArrayTypeInfo& arrInfo = *arrayParamTypes[i];
+            llvm::AllocaInst* lengthAlloca = CreateEntryBlockAlloca(paramName + "Len", builder.getInt32Ty());
+
+            if (arrInfo.isDynamic)
+            {
+                // runtime length passed in with second LLVM parameter
+                llvm::Argument& lenArg = *rawArg;
+                ++rawArg;
+                lenArg.setName(paramName + "Len");
+                builder.CreateStore(&lenArg, lengthAlloca);
+
+                if (byReference) // pass by reference
+                {
+                    // write-back targets: the addresses of the caller's own buffer/length slots
+                    llvm::Argument& outBufSlotArg = *rawArg;
+                    ++rawArg;
+                    outBufSlotArg.setName(paramName + "OutBuf");
+
+                    llvm::Argument& outLenSlotArg = *rawArg;
+                    ++rawArg;
+                    outLenSlotArg.setName(paramName + "OutLen");
+
+                    m_pendingWriteBacks.push_back({ alloca, &outBufSlotArg });
+                    m_pendingWriteBacks.push_back({ lengthAlloca, &outLenSlotArg });
+                }
+                // else (pass by value), nothing to do, 'ownsBuffer' above already made this scope free the copy on exit
+            }
+            else // fixed-size as compile-time constant
+                builder.CreateStore(builder.getInt32((uint32_t)arrInfo.fixedSize), lengthAlloca);
+
+            m_arrays[paramName] = { arrInfo.elementType, true, arrInfo.fixedSize, lengthAlloca, arrInfo.elementTypeName };
+        }
+
+        if (!structParamTypes[i].empty())
+            m_structs.varToType[paramName] = structParamTypes[i];
+    }
+
+    if (returnsDynArray)
+    {
+        m_currentReturnLenOutSlot = &(*rawArg);
+        rawArg->setName("__outLen");
+        ++rawArg;
     }
 
     // Compile body
@@ -1503,18 +1735,40 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
     if (node->GetBodyNode() != nullptr)
         retVal = CompileNode(node->GetBodyNode());
     else
-        std::cout << "Warning: func '" << name << "' has no body\n";
+        fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, "Warning: func '" + name + "' has no body\n");
 
-    // Free all localy created heap values at end of function
-    FreeLocalHeapValues();
+    if (autoReturn && retVal && retVal->getType()->isVoidTy())
+    {
+        Error("func '{}': the one-liner's expression calls a procedure and has no value. Declare ': void'\n", name);
+        retVal = nullptr;
+    }
 
+    if (autoReturn && retVal)
+        retVal = OwnedReturnArray(node->GetBodyNode(), retVal);
+
+    // an owned array that is being returned changes hands: the caller frees it, not us
+    if (returnsDynArray && autoReturn)
+        if (auto* retVa = dynamic_cast<VarAccessNode*>(node->GetBodyNode().get()); retVa && !retVa->GetIsNamespaced())
+            if (VarInfo* rv = FindVariable(std::get<std::string>(retVa->GetVarNameToken().GetValue())))
+                rv->isHeapAllocated = false;
+
+    // Free all localy created heap values at end of function & after an explicit 'return' the block is already terminated
+    if (!builder.GetInsertBlock()->getTerminator())
+        FreeLocalHeapValues();
+
+    // Revert new variable scope
     PopScope();
 
     llvm::BasicBlock* currentBB = builder.GetInsertBlock();
     if (!currentBB->getTerminator())
     {
-        if (node->GetShouldAutoReturn() && retVal)
+        FlushPendingWriteBacks();
+
+        if (autoReturn && retVal)
         {
+            if (returnsDynArray)
+                EmitReturnLenWriteBack(node->GetBodyNode());
+
             if (structReturnPtr)
             {
                 builder.CreateStore(retVal, structReturnPtr);
@@ -1530,17 +1784,20 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
         }
         else
         {
-            llvm::Value* defaultRet;
-            if (returnType->isPointerTy())
-                defaultRet = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(returnType));
-            else
-                defaultRet = llvm::ConstantInt::get(returnType, 0);
+            if (returnsDynArray)
+                builder.CreateStore(builder.getInt32(0), m_currentReturnLenOutSlot);
 
-            builder.CreateRet(defaultRet);
+            if (returnType->isVoidTy())
+                builder.CreateRetVoid();
+            else
+                builder.CreateRet(llvm::Constant::getNullValue(returnType));
         }
     }
 
+    m_functionScopeBase = savedFunctionScopeBase;
     m_currentStructRetPtr = savedStructRetPtr;
+    m_pendingWriteBacks = std::move(savedWriteBacks);
+    m_currentReturnLenOutSlot = savedReturnLenOutSlot;
 
     llvm::verifyFunction(*func);
 
@@ -1552,7 +1809,7 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
     auto varAccess = dynamic_cast<VarAccessNode*>(node->GetNodeToCall().get());
     if (!varAccess)
     {
-        std::cerr << "Invalid function call!\n";
+        Error("Invalid function call!\n");
         return nullptr;
     }
 
@@ -1655,18 +1912,19 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
             if (FindVariable(namespaceName))
                 return Compile_MemberCall(namespaceName, name, node);
 
-            std::cerr << "Function calling in seperate Module error: Module '" << namespaceName << "' not found\n";
+            Error("Function calling in seperate Module error: Module '{}' not found\n", namespaceName);
             return nullptr;
         }
 
         auto funcIt = modIt->second.functions.find(name);
         if (funcIt == modIt->second.functions.end())
         {
-            std::cerr << "Function calling in sperate module error: Function '" << name << "' not found in module '" << namespaceName << "'\n";
+            Error("Function calling in sperate module error: Function '{}' not found in module '{}'\n", name, namespaceName);
             return nullptr;
         }
 
-        llvm::Function* func = funcIt->second;
+        FunctionInfo& funcInfo = funcIt->second;
+        llvm::Function* func = funcInfo.function;
 
         std::vector<llvm::Value*> args;
 
@@ -1680,44 +1938,8 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
             args.push_back(structRetAlloca);
         }
 
-        for (auto& argNode : node->GetArgNodes())
-        {
-            // mirrors the same by-reference logic as the local user-function call path below, so struct args behave consistently
-            if (auto* va = dynamic_cast<VarAccessNode*>(argNode.get()); va && !va->GetIsNamespaced())
-            {
-                const std::string& varName = std::get<std::string>(va->GetVarNameToken().GetValue());
-                VarInfo* var = FindVariable(varName);
-                if (var)
-                {
-                    if (var->alloca->getAllocatedType()->isStructTy())
-                    {
-                        args.push_back(var->alloca);
-                        continue;
-                    }
-                    if (var->alloca->getAllocatedType()->isPointerTy() && m_structs.IsStructVar(varName))
-                    {
-                        llvm::Value* ptrVal = builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, varName);
-                        args.push_back(ptrVal);
-                        continue;
-                    }
-                }
-            }
-
-            llvm::Value* argVal = CompileNode(argNode);
-            if (!argVal)
-                return nullptr;
-
-            if (argVal->getType()->isStructTy())
-            {
-                llvm::AllocaInst* tmp = CreateEntryBlockAlloca("structArg", argVal->getType());
-                builder.CreateStore(argVal, tmp);
-                argVal = tmp;
-            }
-            else if (args.size() < func->getFunctionType()->getNumParams())
-                argVal = m_abi.CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
-
-            args.push_back(argVal);
-        }
+        if (!Compile_CallArguments(func, funcInfo, namespaceName + "::" + name, node, args))
+            return nullptr;
 
         llvm::CallInst* call = builder.CreateCall(func, args);
         if (structRetAlloca)
@@ -1756,11 +1978,18 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
     // Normal functions (user-defined)
     if (m_functions.find(name) == m_functions.end())
     {
-        std::cerr << "Unknown function: '" << name << "'!\n";
+        Error("Unknown function: '{}'!\n", name);
         return nullptr;
     }
 
-    llvm::Function* func = m_functions[name];
+    FunctionInfo& funcInfo = m_functions[name];
+    llvm::Function* func = funcInfo.function;
+
+    if (funcInfo.returnArrayInfo.has_value())
+    {
+        Error("Function '{}' returns a '[dyn]' array and can currently only be called as 'x : var = {}(...)'\n", name, name);
+        return nullptr;
+    }
 
     std::vector<llvm::Value*> args;
 
@@ -1774,47 +2003,8 @@ llvm::Value *Compiler::Compile_CallNode(CallNode *node)
         args.push_back(sretAlloca);
     }
 
-    for (auto& argNode : node->GetArgNodes())
-    {
-        // if the argument is a plain variable that already holds a struct, pass the address of its *existing* alloca directly
-        if (auto* va = dynamic_cast<VarAccessNode*>(argNode.get()); va && !va->GetIsNamespaced())
-        {
-            const std::string& varName = std::get<std::string>(va->GetVarNameToken().GetValue());
-            VarInfo* var = FindVariable(varName);
-            if (var)
-            {
-                if (var->alloca->getAllocatedType()->isStructTy())
-                {
-                    // struct stored directly -> pass the address of the real storage
-                    args.push_back(var->alloca);
-                    continue;
-                }
-                if (var->alloca->getAllocatedType()->isPointerTy() && m_structs.IsStructVar(varName))
-                {
-                    // already a struct pointer (e.g. forwarding a param) -> pass it through as-is
-                    llvm::Value* ptrVal = builder.CreateLoad(var->alloca->getAllocatedType(), var->alloca, varName);
-                    args.push_back(ptrVal);
-                    continue;
-                }
-            }
-        }
-
-        llvm::Value* argVal = CompileNode(argNode);
-        if (!argVal)
-            return nullptr;
-
-        // non-variable expression producing a struct value (e.g. a call that returns a struct) has no original storage to alias, so a temp is the only option here
-        if (argVal->getType()->isStructTy())
-        {
-            llvm::AllocaInst* tmp = CreateEntryBlockAlloca("structArg", argVal->getType());
-            builder.CreateStore(argVal, tmp);
-            argVal = tmp;
-        }
-        else if (args.size() < func->getFunctionType()->getNumParams())
-            argVal = m_abi.CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
-
-        args.push_back(argVal);
-    }
+    if (!Compile_CallArguments(func, funcInfo, name, node, args))
+        return nullptr;
 
     llvm::CallInst* call = builder.CreateCall(func, args);
     if (sretAlloca)
@@ -1830,7 +2020,7 @@ llvm::Value *Compiler::Compile_MemberCall(const std::string &ownerName, const st
     VarInfo* var = FindVariable(ownerName);
     if (!var)
     {
-        std::cerr << "Member method call error: '" << ownerName << "' is not a known variable, module, or linked library\n";
+        Error("Member method call error: '{}' is not a known variable, module, or linked library\n", ownerName);
         return nullptr;
     }
 
@@ -1855,14 +2045,14 @@ llvm::Value *Compiler::Compile_MemberCall(const std::string &ownerName, const st
     }
     else
     {
-        std::cerr << "Member method call error: '" << ownerName << "' has no method '" << methodName << "'\n";
+        Error("Member method call error: '{}' has no method '{}'\n", ownerName, methodName);
         return nullptr;
     }
 
     auto methodIt = m_memberMethods.find(ctx.typeName + "::" + methodName);
     if (methodIt == m_memberMethods.end())
     {
-        std::cerr << "Member method call error: '" << ctx.typeName << "' has no method '" << methodName << "'\n";
+        Error("Member method call error: '{}' has no method '{}'\n", ctx.typeName, methodName);
         return nullptr;
     }
 
@@ -1871,11 +2061,50 @@ llvm::Value *Compiler::Compile_MemberCall(const std::string &ownerName, const st
 
 llvm::Value *Compiler::Compile_ReturnNode(ReturnNode *node)
 {
+    if (!m_functionScopeBase)
+    {
+        Error("'return' is only allowed inside a function\n");
+        m_hadError = true;
+        return nullptr;
+    }
+
+    llvm::Type* retTy = builder.GetInsertBlock()->getParent()->getReturnType();
+    const bool voidReturn = retTy->isVoidTy() && !m_currentStructRetPtr;
+
     if (node->GetNodeToReturn().has_value())
     {
-        llvm::Value* val = CompileNode(node->GetNodeToReturn().value());
+        std::shared_ptr<Node> retExpr = node->GetNodeToReturn().value();
+
+        if (voidReturn)
+        {
+            Error("A procedure (': void') can't return a value\n");
+            return nullptr;
+        }
+
+        llvm::Value* val = CompileNode(retExpr);
         if (!val)
             return nullptr;
+
+        if (val->getType()->isVoidTy())
+        {
+            Error("'return' needs a value, but '{}' calls a procedure (': void')\n", retExpr->Repr());
+            return nullptr;
+        }
+
+        // returning a plain variable hands its buffer over to the caller, so it must not be freed here
+        const VarInfo* keep = nullptr;
+        if (auto* va = dynamic_cast<VarAccessNode*>(retExpr.get()); va && !va->GetIsNamespaced())
+            keep = FindVariable(std::get<std::string>(va->GetVarNameToken().GetValue()));
+
+        val = OwnedReturnArray(retExpr, val);
+        if (!val)
+            return nullptr;
+
+        FlushPendingWriteBacks();
+        if (m_currentReturnLenOutSlot)
+            EmitReturnLenWriteBack(retExpr);
+
+        FreeHeapValuesForReturn(keep, val);
 
         if (m_currentStructRetPtr)
         {
@@ -1884,18 +2113,27 @@ llvm::Value *Compiler::Compile_ReturnNode(ReturnNode *node)
         }
         return builder.CreateRet(val);
     }
-    
-    if (m_currentStructRetPtr)
+
+    if (m_currentReturnLenOutSlot)
+    {
+        Error("A function returning a '[dyn]' array must return an array\n");
+        return nullptr;
+    }
+
+    FlushPendingWriteBacks();
+    FreeHeapValuesForReturn(nullptr, nullptr);
+
+    if (m_currentStructRetPtr || retTy->isVoidTy())
         return builder.CreateRetVoid();
 
-    return builder.CreateRet(llvm::ConstantInt::get(builder.getInt32Ty(), 0));
+    return builder.CreateRet(llvm::Constant::getNullValue(retTy));
 }
 
 llvm::Value *Compiler::Compile_ContinueNode(ContinueNode *node)
 {
     if (m_loopStack.empty())
     {
-        std::cerr << "Continue outside loop\n";
+        Error("Continue outside loop\n");
         return nullptr;
     }
 
@@ -1912,7 +2150,7 @@ llvm::Value *Compiler::Compile_BreakNode(BreakNode *node)
 {
     if (m_loopStack.empty())
     {
-        std::cerr << "Break outside loop\n";
+        Error("Break outside loop\n");
         return nullptr;
     }
 
@@ -1938,7 +2176,7 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
 
     if (!std::filesystem::exists(filepath))
     {
-        std::cerr << "Module not found: " << filepath.string() << "\n";
+        Error("Module not found: {}\n", filepath.string());
         return nullptr;
     }
 
@@ -1949,7 +2187,7 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
     std::ifstream file(filepath);
     if (!file.is_open())
     {
-        std::cerr << "Could not open module file: " << filepath.string() << "\n";
+        Error("Could not open module file: {}\n", filepath.string());
         return nullptr;
     }
 
@@ -1958,12 +2196,17 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
     std::string fileContent = buffer.str();
     file.close();
 
+    // info
+    fmt::print(fmt::fg(fmt::color::cyan) | fmt::emphasis::bold, "Compiling ");
+    std::cout << filepath.filename() << "\n";
+
     // lex source
     Lexer lexer(filepath.string(), fileContent);
     auto lexResult = lexer.MakeTokens();
     if (lexResult.error != nullptr)
     {
-        std::cerr << "Lexer error in module!\n" << Helper::GetErrorString(lexResult.error.get()) << "\n";
+        Helper::PrintErrorString(lexResult.error.get());
+        Error("Lexer error in module!\n");
         return nullptr;
     }
 
@@ -1972,7 +2215,8 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
     auto parseResult = parser.Parse();
     if (parseResult.HasError())
     {
-        std::cerr << "Parser error in module!\n" << Helper::GetErrorString(parseResult.GetErrorPtr()) << "\n";
+        Helper::PrintErrorString(parseResult.GetErrorPtr());
+        Error("Parser error in module!\n");
         return nullptr;
     }
 
@@ -1989,10 +2233,10 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
     CompileNode(parseResult.GetNode());
 
     // record functions introduced by the module
-    for (auto& [name, func] : m_functions)
+    for (auto& [name, funcInfo] : m_functions)
     {
         if (functionsBefore.find(name) == functionsBefore.end())
-            m_modules[alias].functions[name] = func;
+            m_modules[alias].functions[name] = funcInfo;
     }
 
     // record module-level variables (globals / top-level allocas)
@@ -2018,7 +2262,7 @@ llvm::Value *Compiler::Compile_LinkNode(LinkNode *node)
 
     if (!std::filesystem::exists(filepath))
     {
-        std::cerr << "Link file not found: '" << filepath.string() << "'\n";
+        Error("Link file not found: '{}'\n", filepath.string());
         return nullptr;
     }
 
@@ -2039,7 +2283,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
     // validate that the library was linked first
     if (m_linkedLibs.find(moduleAlias) == m_linkedLibs.end())
     {
-        std::cerr << "Extern error: linked module alias '" << moduleAlias << "' not found. Did you forgot '#link \"lib.so\" as " << moduleAlias << "'\n";
+        Error("Extern error: linked module alias '{}' not found. Did you forgot '#link \"lib.so\" as {}'\n", moduleAlias, moduleAlias);
         return nullptr;
     }
 
@@ -2049,7 +2293,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
 
     if (openParen == std::string::npos || closeParen == std::string::npos || closeParen < openParen)
     {
-        std::cerr << "Extern error: invalid signature '" << signature << "' for function '" << functionName << "'\n";
+        Error("Extern error: invalid signature '{}' for function '{}'\n", signature, functionName);
         return nullptr;
     }
 
@@ -2152,7 +2396,7 @@ llvm::Value *Compiler::Compile_ExternNode(ExternNode *node)
         llvm::FunctionType* existing = func->getFunctionType();
         if (existing->getReturnType() != abiReturnType || existing->getNumParams() != abiArgTypes.size())
         {
-            std::cerr << "Extern error: conflicting declarations for '" << functionName << "'\n";
+            Error("Extern error: conflicting declarations for '{}'\n", functionName);
             return nullptr;
         }
     }
@@ -2172,7 +2416,7 @@ llvm::Value *Compiler::Compile_StructDefNode(StructDefNode *node)
     // avoid reregistering the same struct type
     if (m_structs.HasType(structName))
     {
-        std::cerr << "Struct warning: '" << structName << "' is already defined; Ignoring redefinition\n";
+        fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, "Struct warning: '" + structName + "' is already defined; Ignoring redefinition\n");
         return nullptr;
     }
 
@@ -2256,6 +2500,46 @@ void Compiler::RegisterCompileTimeBuiltin(const std::string &name, int arity, Co
     };
 }
 
+void Compiler::FlushPendingWriteBacks()
+{
+    for (auto& wb : m_pendingWriteBacks)
+    {
+        llvm::Value* cur = builder.CreateLoad(wb.local->getAllocatedType(), wb.local, "wb");
+        builder.CreateStore(cur, wb.outSlot);
+    }
+}
+
+// Writes the current length of the returned array into this function's hidden __outLen parameter
+void Compiler::EmitReturnLenWriteBack(std::shared_ptr<Node> returnedNode)
+{
+    if (!m_currentReturnLenOutSlot)
+        return;
+
+    if (auto va = dynamic_cast<VarAccessNode*>(returnedNode.get()); va && !va->GetIsNamespaced())
+    {
+        std::string varName = std::get<std::string>(va->GetVarNameToken().GetValue());
+        auto arrIt = m_arrays.find(varName);
+        if (arrIt != m_arrays.end())
+        {
+            llvm::Value* curLen = builder.CreateLoad(builder.getInt32Ty(), arrIt->second.lengthAlloca, "retLen");
+            builder.CreateStore(curLen, m_currentReturnLenOutSlot);
+            return;
+        }
+    }
+
+    Error("internal error: '[dyn]' return reached the length write-back without a tracked array\n");
+}
+
+// a fresh stack copy of a struct / fixed-size array, for by-value parameters
+llvm::Value *Compiler::CopyToTemp(llvm::Type *ty, llvm::Value *srcPtr, const std::string &name)
+{
+    llvm::AllocaInst* tmp = CreateEntryBlockAlloca(name, ty);
+    const llvm::DataLayout& dl = module->getDataLayout();
+    llvm::Align align = dl.getABITypeAlign(ty);
+    builder.CreateMemCpy(tmp, align, srcPtr, align, dl.getTypeAllocSize(ty));
+    return tmp;
+}
+
 std::unordered_map<std::string, VarInfo> Compiler::CollectAllVariables() const
 {
     std::unordered_map<std::string, VarInfo> result;
@@ -2285,6 +2569,43 @@ void Compiler::FreeLocalHeapValues()
         llvm::Value* loaded = builder.CreateLoad(info.alloca->getAllocatedType(), info.alloca, name);
 
         builder.CreateCall(m_runtime.free, { loaded });
+    }
+}
+
+// frees every heap-owned local from the innermost scope down to the function's own scope, so an early
+// 'return' doesn't leak. 'keep' is the variable being returned: its buffer is handed to the caller instead
+// and anything whose buffer is the returned pointer (reached through another name) is skipped at runtime
+void Compiler::FreeHeapValuesForReturn(const VarInfo *keep, llvm::Value *retVal)
+{
+    llvm::Function* fn = builder.GetInsertBlock()->getParent();
+    const bool canAlias = retVal && retVal->getType()->isPointerTy();
+
+    for (size_t s = m_scopes.size(); s-- > *m_functionScopeBase; )
+    {
+        for (auto& [name, info] : m_scopes[s])
+        {
+            if (!info.isHeapAllocated || &info == keep)
+                continue;
+
+            llvm::Value* loaded = builder.CreateLoad(info.alloca->getAllocatedType(), info.alloca, name);
+
+            if (!canAlias || !loaded->getType()->isPointerTy())
+            {
+                builder.CreateCall(m_runtime.free, { loaded });
+                continue;
+            }
+
+            llvm::BasicBlock* freeBB = llvm::BasicBlock::Create(context, "retfree", fn);
+            llvm::BasicBlock* contBB = llvm::BasicBlock::Create(context, "retfree.cont", fn);
+
+            builder.CreateCondBr(builder.CreateICmpEQ(loaded, retVal), contBB, freeBB);
+
+            builder.SetInsertPoint(freeBB);
+            builder.CreateCall(m_runtime.free, { loaded });
+            builder.CreateBr(contBB);
+
+            builder.SetInsertPoint(contBB);
+        }
     }
 }
 
@@ -2421,7 +2742,7 @@ llvm::Type *Compiler::GetLogicalFunctionReturnType(llvm::Function *func)
 }
 
 // returns the LLVM type a single expression will produce. 'locals' carries variable types tracked by InferReturnTypeBlock
-llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap& locals)
+llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap &locals, const std::unordered_map<std::string, llvm::Type *> &paramArrayElemTypes)
 {
     if (!node)
         return builder.getInt32Ty();
@@ -2439,13 +2760,13 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
 
     // unary operation (same type as operand)
     if (auto u = dynamic_cast<UnaryOpNode*>(node.get()))
-        return InferenceExprType(u->GetNode(), locals);
+        return InferenceExprType(u->GetNode(), locals, paramArrayElemTypes);
 
     // binary operation (ptr if either side is ptr)
     if (auto b = dynamic_cast<BinOpNode*>(node.get()))
     {
-        llvm::Type* L = InferenceExprType(b->GetLeftNode(),  locals);
-        llvm::Type* R = InferenceExprType(b->GetRightNode(), locals);
+        llvm::Type* L = InferenceExprType(b->GetLeftNode(),  locals, paramArrayElemTypes);
+        llvm::Type* R = InferenceExprType(b->GetRightNode(), locals, paramArrayElemTypes);
         if (L->isPointerTy() || R->isPointerTy())
             return llvm::PointerType::get(builder.getInt8Ty(), 0);
         else
@@ -2474,6 +2795,11 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
         VarInfo* var = FindVariable(name);
         if (var)
             return var->alloca->getAllocatedType();
+
+        // this function's own array parameter, used bare (e.g. 'return nameList') rather than indexed which is not registered in m_arrays/FindVariable yet at inference time
+        auto paramArrIt = paramArrayElemTypes.find(name);
+        if (paramArrIt != paramArrayElemTypes.end())
+            return llvm::PointerType::get(paramArrIt->second, 0);
  
         return builder.getInt32Ty();
     }
@@ -2502,7 +2828,7 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
                 // cross-module Eugen++ function
                 auto modIt = m_modules.find(namespaceName);
                 if (modIt != m_modules.end() && modIt->second.functions.count(calleeName))
-                    return GetLogicalFunctionReturnType(modIt->second.functions.at(calleeName));
+                    return GetLogicalFunctionReturnType(modIt->second.functions.at(calleeName).function);
 
                 return builder.getInt32Ty();
             }
@@ -2510,9 +2836,32 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
             std::string name = std::get<std::string>(va->GetVarNameToken().GetValue());
             auto it = m_functions.find(name);
             if (it != m_functions.end())
-                return GetLogicalFunctionReturnType(it->second);
+                return GetLogicalFunctionReturnType(it->second.function);
         }
         return builder.getInt32Ty(); // forward/unknown call, assume i32
+    }
+
+    // index: use the type from the element
+    if (auto idx = dynamic_cast<IndexGetNode*>(node.get()))
+    {
+        if (auto listVa = dynamic_cast<VarAccessNode*>(idx->GetListNode().get()); listVa && !listVa->GetIsNamespaced())
+        {
+            std::string listName = std::get<std::string>(listVa->GetVarNameToken().GetValue());
+
+            // this function's own array parameter -> not registered in m_arrays yet at inference time
+            auto paramIt = paramArrayElemTypes.find(listName);
+            if (paramIt != paramArrayElemTypes.end())
+                return paramIt->second;
+        }
+
+        std::string elemLangType = GetExprLangType(node);
+        if (!elemLangType.empty())
+        {
+            llvm::Type* t = StringToLLVMType(elemLangType);
+            if (t)
+                return t;
+        }
+        return builder.getInt32Ty();
     }
  
     return builder.getInt32Ty();
@@ -2520,27 +2869,28 @@ llvm::Type *Compiler::InferenceExprType(std::shared_ptr<Node> node, const LocalT
 
 //  Arrow functions (autoReturn=true):  body IS the expression.
 //  Block functions (autoReturn=false): walk statements for return.
-llvm::Type *Compiler::InferenceReturnType(std::shared_ptr<Node> body, bool autoReturn)
+llvm::Type *Compiler::InferenceReturnType(std::shared_ptr<Node> body, bool autoReturn, const std::unordered_map<std::string, llvm::Type *> &paramArrayElemTypes)
 {
     if (autoReturn)
-        return InferenceExprType(body, {}); // body = single expr, no locals needed
+        return InferenceExprType(body, {}, paramArrayElemTypes); // body = single expr, no locals needed
  
     LocalTypeMap locals;
-    return InferenceReturnTypeBlock(body, locals);
+    llvm::Type* t = InferenceReturnTypeBlock(body, locals, paramArrayElemTypes);
+    return t ? t : llvm::Type::getVoidTy(context);
 }
 
 // walks the body of a block function. Tracks VarAssignNodes into 'locals' so subsequent expression inference can resolve variable types without compiled allocas
-llvm::Type *Compiler::InferenceReturnTypeBlock(std::shared_ptr<Node> node, LocalTypeMap& locals)
+llvm::Type *Compiler::InferenceReturnTypeBlock(std::shared_ptr<Node> node, LocalTypeMap &locals, const std::unordered_map<std::string, llvm::Type *> &paramArrayElemTypes)
 {
     if (!node)
-        return builder.getInt32Ty();
+        return nullptr;
  
     // explicit return statement
     if (auto ret = dynamic_cast<ReturnNode*>(node.get()))
     {
         if (ret->GetNodeToReturn().has_value())
-            return InferenceExprType(ret->GetNodeToReturn().value(), locals);
-        return builder.getInt32Ty();
+            return InferenceExprType(ret->GetNodeToReturn().value(), locals, paramArrayElemTypes);
+        return nullptr;
     }
  
     // statement list (ListNode used as block body)
@@ -2552,25 +2902,16 @@ llvm::Type *Compiler::InferenceReturnTypeBlock(std::shared_ptr<Node> node, Local
             if (auto assign = dynamic_cast<VarAssignNode*>(stmt.get()))
             {
                 std::string varName = std::get<std::string>(assign->GetVarNameToken().GetValue());
-                locals[varName] = InferenceExprType(assign->GetValueNode(), locals);
+                locals[varName] = InferenceExprType(assign->GetValueNode(), locals, paramArrayElemTypes);
                 continue;
             }
  
-            // explicit return found
-            if (auto ret = dynamic_cast<ReturnNode*>(stmt.get()))
-            {
-                if (ret->GetNodeToReturn().has_value())
-                    return InferenceExprType(ret->GetNodeToReturn().value(), locals);
-                return builder.getInt32Ty();
-            }
- 
-            // recurse into nested control flow
-            llvm::Type* t = InferenceReturnTypeBlock(stmt, locals);
-            if (t->isPointerTy())
+            // a 'return <value>' here or in nested control flow
+            if (llvm::Type* t = InferenceReturnTypeBlock(stmt, locals, paramArrayElemTypes))
                 return t;
         }
  
-        return builder.getInt32Ty(); // no explicit return found
+        return nullptr; // no explicit return found
     }
  
     // control flow: recurse into branches
@@ -2578,21 +2919,20 @@ llvm::Type *Compiler::InferenceReturnTypeBlock(std::shared_ptr<Node> node, Local
     {
         for (auto& c : ifNode->GetCases())
         {
-            llvm::Type* t = InferenceReturnTypeBlock(c.GetExpr(), locals);
-            if (t->isPointerTy()) return t;
+            if (llvm::Type* t = InferenceReturnTypeBlock(c.GetExpr(), locals, paramArrayElemTypes))
+                return t;
         }
-        if (ifNode->GetElseCase())
-            return InferenceReturnTypeBlock(ifNode->GetElseCase(), locals);
-        return builder.getInt32Ty();
+        
+        return InferenceReturnTypeBlock(ifNode->GetElseCase(), locals, paramArrayElemTypes);
     }
  
     if (auto forNode = dynamic_cast<ForNode*>(node.get()))
-        return InferenceReturnTypeBlock(forNode->GetBodyNode(), locals);
+        return InferenceReturnTypeBlock(forNode->GetBodyNode(), locals, paramArrayElemTypes);
  
     if (auto whileNode = dynamic_cast<WhileNode*>(node.get()))
-        return InferenceReturnTypeBlock(whileNode->GetBodyNode(), locals);
+        return InferenceReturnTypeBlock(whileNode->GetBodyNode(), locals, paramArrayElemTypes);
  
-    return builder.getInt32Ty();
+    return nullptr;
 }
 
 llvm::Function *Compiler::DeclareExternalFunction(const std::string &symbolName, llvm::Type *returnType, std::vector<llvm::Type *> paramTypes, bool isVarArg)
@@ -2895,48 +3235,53 @@ llvm::Value *Compiler::IntToString(llvm::Value *val)
 //   <StructName>                -> ptr to the registered StructType
 llvm::Type *Compiler::StringToLLVMType(const std::string &typeName)
 {
-    // 1-bit boolean
-    if (typeName == "bool")
+    if (llvm::Type* ty = TryStringToLLVMType(typeName))
+        return ty;
+
+    Error("StringToLLVMType: unknown type '{}'\n", typeName);
+    return builder.getInt32Ty();
+}
+
+// Silent lookup: returns nullptr for an unknown type name
+llvm::Type *Compiler::TryStringToLLVMType(const std::string &typeName)
+{
+    // 8-bit integers (bool is stored as i8 here)
+    if (typeName == "bool" || typeName == "uint8" || typeName == "int8" || typeName == "char")
         return builder.getInt8Ty();
- 
-    // 8-bit integers
-    if (typeName == "uint8" || typeName == "int8" || typeName == "char")
-        return builder.getInt8Ty();
- 
+
     // 16-bit integers
     if (typeName == "uint16" || typeName == "int16")
         return builder.getInt16Ty();
- 
+
     // 32-bit integers
     if (typeName == "int" || typeName == "int32" || typeName == "uint32")
         return builder.getInt32Ty();
- 
+
     // 64-bit integers
     if (typeName == "int64" || typeName == "uint64")
         return builder.getInt64Ty();
- 
+
     // floating-point
     if (typeName == "float")
-        return builder.getFloatTy();   // 32-bit IEEE float
- 
+        return builder.getFloatTy(); // 32-bit IEEE float
+
     if (typeName == "double")
         return builder.getDoubleTy();
- 
+
     // pointer-like / strings
     if (typeName == "string")
         return llvm::PointerType::get(builder.getInt8Ty(), 0);
- 
+
     // void
     if (typeName == "void")
         return llvm::Type::getVoidTy(context);
- 
+
     // named struct defined earlier. Passed by pointer when used as a parameter
     auto it = m_structs.types.find(typeName);
     if (it != m_structs.types.end())
         return llvm::PointerType::get(it->second, 0);
- 
-    std::cerr << "StringToLLVMType: unknow type '" << typeName << "', defaulting to i32\n";
-    return builder.getInt32Ty();
+
+    return nullptr;
 }
 
 std::string Compiler::LLVMTypeToString(llvm::Type *type)
@@ -2969,6 +3314,32 @@ std::string Compiler::LLVMTypeToString(llvm::Type *type)
     return "unknown";
 }
 
+bool Compiler::IsNumericTypeName(const std::string &typeName)
+{
+    llvm::Type* ty = TryStringToLLVMType(typeName);
+    return ty && (ty->isIntegerTy() || ty->isFloatingPointTy());
+}
+
+bool Compiler::ArgTypeCompatible(const std::string &declaredType, const std::string &actualType)
+{
+    if (declaredType.empty() || actualType.empty() || actualType == "unknown")
+        return true;
+
+    if (declaredType == actualType)
+        return true;
+
+    auto declaredArr = ParseArrayTypeName(declaredType);
+    auto actualArr   = ParseArrayTypeName(actualType);
+    if (declaredArr.has_value() || actualArr.has_value())
+    {
+        if (!declaredArr.has_value() || !actualArr.has_value())
+            return false;
+        return declaredArr->elementTypeName == actualArr->elementTypeName;
+    }
+
+    return IsNumericTypeName(declaredType) && IsNumericTypeName(actualType);
+}
+
 llvm::Value *Compiler::Compile_CharToHeapString(llvm::Value *charVal)
 {
     llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { builder.getInt64(2) }, "charStrRaw");
@@ -2988,7 +3359,7 @@ llvm::Value *Compiler::Compile_CharArrayFromString(VarAssignNode *node, const st
 
     if (rhs->getType() != builder.getInt8Ty()->getPointerTo())
     {
-        std::cerr << "Array variable '" << name << "' (char[" << info.fixedSize << "]) must be initialized with a list literal or a string-valued expression\n";
+        Error("Array variable '{}' (char[{}]) must be initialized with a list literal or a string-valued expression\n", name, info.fixedSize);
         return nullptr;
     }
 
@@ -3019,6 +3390,199 @@ llvm::Value *Compiler::Compile_CharArrayFromString(VarAssignNode *node, const st
     m_arrays[name] = { builder.getInt8Ty(), false, info.fixedSize, nullptr, "char" };
 
     return alloca;
+}
+
+bool Compiler::Compile_CallArguments(llvm::Function *func, const FunctionInfo &funcInfo, const std::string &displayName, CallNode *node, std::vector<llvm::Value *> &args)
+{
+    const size_t requiredParamCount = funcInfo.paramTypeNames.size();
+    std::vector<std::shared_ptr<Node>> argNodes = node->GetArgNodes();
+
+    if (argNodes.size() > requiredParamCount)
+    {
+        Error("Function '{}' takes at most {} argument(s). Got {}\n", displayName, requiredParamCount, argNodes.size());
+        return false;
+    }
+
+    std::unordered_map<std::string, bool> passedVars; // variable name -> passed to a 'ref' parameter?
+
+    for (size_t i = 0; i < argNodes.size(); ++i)
+    {
+        auto& argNode = argNodes[i];
+        const std::string declaredType = funcInfo.paramTypeNames[i];
+        const bool byRef = i < funcInfo.paramByRef.size() && funcInfo.paramByRef[i];
+
+        auto fail = [&](const std::string& why)
+        {
+            Error("Function '{}' argument {}: {}\n", displayName, (i + 1), why);
+            return false;
+        };
+
+        std::string actualType = ResolveStaticTypeName(argNode);
+        if (!declaredType.empty() && !ArgTypeCompatible(declaredType, actualType))
+            return fail("expects type '" + declaredType + "' but got '" + actualType + "'");
+
+        auto declaredArr = ParseArrayTypeName(declaredType);
+
+        VarInfo* var = nullptr;
+        std::string varName;
+        if (auto* va = dynamic_cast<VarAccessNode*>(argNode.get()); va && !va->GetIsNamespaced())
+        {
+            varName = std::get<std::string>(va->GetVarNameToken().GetValue());
+            var = FindVariable(varName);
+        }
+
+        if (byRef && !var)
+            return fail("a 'ref' parameter needs a plain variable as its argument");
+
+        if (var)
+        {
+            // the same variable can't reach two parameters when one is 'ref': the copy-out would clobber the other
+            auto seen = passedVars.find(varName);
+            if (seen != passedVars.end() && (seen->second || byRef))
+                return fail("'" + varName + "' is also passed to another parameter of this call and one of them is 'ref'");
+            passedVars[varName] = byRef;
+
+            llvm::Type* allocTy = var->alloca->getAllocatedType();
+
+            // struct variable: the struct itself, or a pointer to it when it is a parameter of the enclosing function
+            llvm::Type* structTy = nullptr;
+            llvm::Value* structPtr = nullptr;
+            if (allocTy->isStructTy())
+            {
+                structTy = allocTy;
+                structPtr = var->alloca;
+            }
+            else if (allocTy->isPointerTy())
+            {
+                auto tIt = m_structs.varToType.find(varName);
+                if (tIt != m_structs.varToType.end() && m_structs.types.count(tIt->second))
+                {
+                    structTy = m_structs.types.at(tIt->second);
+                    structPtr = builder.CreateLoad(allocTy, var->alloca, varName);
+                }
+            }
+            if (structTy)
+            {
+                args.push_back(byRef ? structPtr : CopyToTemp(structTy, structPtr, varName + "Copy"));
+                continue;
+            }
+
+            // fixed-size array variable (a real stack array)
+            if (allocTy->isArrayTy())
+            {
+                if (declaredArr && declaredArr->isDynamic)
+                    return fail("a fixed-size array can't be passed to a '[dyn]' parameter");
+
+                args.push_back(byRef ? static_cast<llvm::Value*>(var->alloca) : CopyToTemp(allocTy, var->alloca, varName + "Copy"));
+                continue;
+            }
+
+            // array parameter of ours (a pointer) or a dynamic array variable
+            if (declaredArr)
+            {
+                auto arrIt = m_arrays.find(varName);
+                if (arrIt == m_arrays.end())
+                    return fail("'" + varName + "' is not a known array");
+
+                llvm::Value* basePtr = builder.CreateLoad(allocTy, var->alloca, varName);
+
+                if (!declaredArr->isDynamic)
+                {
+                    llvm::Type* arrTy = llvm::ArrayType::get(declaredArr->elementType, declaredArr->fixedSize);
+                    args.push_back(byRef ? basePtr : CopyToTemp(arrTy, basePtr, varName + "Copy"));
+                    continue;
+                }
+
+                if (!arrIt->second.isDynamic)
+                    return fail("'" + varName + "' must be a dynamic array for a '[dyn]' parameter");
+
+                llvm::Value* len = builder.CreateLoad(builder.getInt32Ty(), arrIt->second.lengthAlloca, varName + "Len");
+
+                if (byRef)
+                {
+                    args.push_back(basePtr);
+                    args.push_back(len);
+                    args.push_back(var->alloca);
+                    args.push_back(arrIt->second.lengthAlloca);
+                }
+                else
+                {
+                    // by value: give the callee its own heap copy of the buffer
+                    const llvm::DataLayout& dl = module->getDataLayout();
+                    llvm::Type* elemTy = declaredArr->elementType;
+                    llvm::Constant* elemSize = llvm::ConstantInt::get(builder.getInt64Ty(), dl.getTypeAllocSize(elemTy));
+                    llvm::Value* bytes = builder.CreateMul(builder.CreateZExt(len, builder.getInt64Ty()), elemSize);
+
+                    llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { bytes }, varName + "Copy");
+                    llvm::Value* copyPtr = builder.CreateBitCast(raw, llvm::PointerType::get(elemTy, 0), varName + "CopyPtr");
+                    llvm::Align align(dl.getABITypeAlign(elemTy));
+                    builder.CreateMemCpy(copyPtr, align, basePtr, align, bytes);
+
+                    args.push_back(copyPtr);
+                    args.push_back(len);
+                }
+                continue;
+            }
+
+            // scalar passed by reference: hand over the variable's address, and require the exact LLVM type
+            // (a numeric conversion would change the width of what the callee copies back)
+            if (byRef)
+            {
+                if (allocTy != TryStringToLLVMType(declaredType))
+                    return fail("a 'ref' parameter needs a variable of exactly type '" + declaredType + "'");
+
+                args.push_back(var->alloca);
+                continue;
+            }
+        }
+
+        if (declaredArr && declaredArr->isDynamic)
+            return fail("only a plain dynamic array variable can be passed for a '[dyn]' parameter right now");
+
+        // by value: scalars, strings, expressions and struct-valued results (already a fresh temporary)
+        llvm::Value* argVal = CompileNode(argNode);
+        if (!argVal)
+            return false;
+
+        if (argVal->getType()->isStructTy())
+        {
+            llvm::AllocaInst* tmp = CreateEntryBlockAlloca("structArg", argVal->getType());
+            builder.CreateStore(argVal, tmp);
+            argVal = tmp;
+        }
+        else if (args.size() < func->getFunctionType()->getNumParams())
+            argVal = m_abi.CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
+
+        args.push_back(argVal);
+    }
+
+    for (size_t i = argNodes.size(); i < requiredParamCount; ++i)
+    {
+        std::shared_ptr<Node> defaultNode = i < funcInfo.defaults.size() ? funcInfo.defaults[i] : nullptr;
+
+        if (!defaultNode)
+        {
+            Error("Function '{}' is missing required argument {} (no default value declared)\n", displayName, (i + 1));
+            return false;
+        }
+
+        llvm::Value* argVal = CompileNode(defaultNode);
+        if (!argVal)
+            return false;
+
+        if (argVal->getType()->isStructTy())
+        {
+            llvm::AllocaInst* tmp = CreateEntryBlockAlloca("structArgDefault", argVal->getType());
+            builder.CreateStore(argVal, tmp);
+            argVal = tmp;
+        }
+        else if (args.size() < func->getFunctionType()->getNumParams())
+            argVal = m_abi.CoerceScalarForParam(argVal, func->getFunctionType()->getParamType(args.size()));
+
+        args.push_back(argVal);
+    }
+
+    return true;
 }
 
 std::string Compiler::GetExprLangType(const std::shared_ptr<Node> &node)
@@ -3099,6 +3663,57 @@ llvm::Value *Compiler::GetArrayElementPtr(llvm::AllocaInst *alloca, llvm::Type *
 
     llvm::Value* idx[] = { llvm::ConstantInt::get(builder.getInt32Ty(), 0), indexVal };
     return builder.CreateGEP(llvm::ArrayType::get(elementType, (uint64_t)length), alloca, idx, name + "ElemPtr");
+}
+
+// A '[dyn]' function hands its result to the caller as an independently owned buffer. A local or by-value
+// parameter is simply handed over, but a 'ref' parameter's buffer still belongs to the caller's variable,
+// so returning it would alias it (double free). Return a copy in that case
+llvm::Value *Compiler::OwnedReturnArray(std::shared_ptr<Node> returnedNode, llvm::Value* val)
+{
+    if (!m_currentReturnLenOutSlot) // not a '[dyn]'-returning function
+        return val;
+
+    auto fail = [&](const std::string& why) -> llvm::Value*
+    {
+        Error("A function returning a '[dyn]' array {}\n", why);
+        m_hadError = true;
+        return nullptr;
+    };
+
+    auto* va = dynamic_cast<VarAccessNode*>(returnedNode.get());
+    if (!va || va->GetIsNamespaced())
+        return fail("must return a plain array variable (e.g. 'return nameList;')");
+
+    const std::string varName = std::get<std::string>(va->GetVarNameToken().GetValue());
+    VarInfo* var = FindVariable(varName);
+    auto arrIt = m_arrays.find(varName);
+    if (!var || arrIt == m_arrays.end())
+        return fail("must return a tracked array variable, but '" + varName + "' is not one");
+
+    bool isRefParam = std::any_of(m_pendingWriteBacks.begin(), m_pendingWriteBacks.end(), [&](const PendingWriteBack& wb) { return wb.local == var->alloca; });
+
+    if (!isRefParam)
+    {
+        // a by-value parameter or a local '[dyn]' array: its buffer is ours and moves to the caller.
+        // Anything else (e.g. a fixed-size array, which lives on a stack) can't be handed over
+        if (!var->isHeapAllocated)
+            return fail("can only return a heap-owned '[dyn]' array, but '" + varName + "' is not one");
+        return val;
+    }
+
+    // a 'ref' parameter's buffer still belongs to the caller's variable, so return a copy
+    const llvm::DataLayout& dl = module->getDataLayout();
+    llvm::Type* elemTy = arrIt->second.elementType;
+    llvm::Value* len = builder.CreateLoad(builder.getInt32Ty(), arrIt->second.lengthAlloca, varName + "RetLen");
+    llvm::Constant* elemSize = llvm::ConstantInt::get(builder.getInt64Ty(), dl.getTypeAllocSize(elemTy));
+    llvm::Value* bytes = builder.CreateMul(builder.CreateZExt(len, builder.getInt64Ty()), elemSize);
+
+    llvm::Value* raw = builder.CreateCall(m_runtime.malloc, { bytes }, varName + "RetCopy");
+    llvm::Value* copyPtr = builder.CreateBitCast(raw, llvm::PointerType::get(elemTy, 0), varName + "RetCopyPtr");
+    llvm::Align align(dl.getABITypeAlign(elemTy));
+    builder.CreateMemCpy(copyPtr, align, val, align, bytes);
+
+    return copyPtr;
 }
 
 bool Compiler::NodeContainsCall(const std::shared_ptr<Node> &node)
@@ -3197,7 +3812,7 @@ std::string Compiler::ResolveStaticTypeName(const std::shared_ptr<Node> &node)
         {
             auto it = m_functions.find(std::get<std::string>(callee->GetVarNameToken().GetValue()));
             if (it != m_functions.end())
-                return LLVMTypeToString(it->second->getReturnType());
+                return LLVMTypeToString(it->second.function->getReturnType());
         }
 
         return "unknown";
@@ -3225,7 +3840,7 @@ void Compiler::InitializeTargetInfo()
     const llvm::Target* target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
     if (!target)
     {
-        std::cerr << "Target lookup failed: " << error << "\n";
+        Error("Target lookup failed: {}\n", error);
         return;
     }
 

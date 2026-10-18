@@ -7,6 +7,9 @@
 #include <unordered_set>
 #include <functional>
 
+#include <fmt/core.h>
+#include <fmt/color.h>
+
 #include "Nodes.hpp"
 #include "BuiltinFunctions.hpp"
 #include "AbiClassifier.hpp"
@@ -53,6 +56,21 @@ struct ArrayInfo
     std::string elementLangType = ""; // like VarInfo::langType but for array elements
 };
 
+struct PendingWriteBack
+{
+    llvm::AllocaInst* local; // the callee's local copy
+    llvm::Value* outSlot; // address in the caller to copy it back to
+};
+
+struct FunctionInfo
+{
+    llvm::Function* function = nullptr;
+	std::vector<std::shared_ptr<Node>> defaults; // parallel to ArgNameToks; nullptr = required
+    std::vector<std::string> paramTypeNames;
+    std::vector<bool> paramByRef;
+    std::optional<ArrayTypeInfo> returnArrayInfo; // set when the declared return type is an array
+};
+
 // Bundles everything the compiler needs to know about struct definitions
 struct StructRegistry
 {
@@ -90,7 +108,7 @@ struct LinkedLibrary
 // # module'd file, keyed by its alias
 struct ProgramModule
 {
-    std::unordered_map<std::string, llvm::Function*> functions;
+    std::unordered_map<std::string, FunctionInfo> functions;
     std::unordered_map<std::string, VarInfo> variables; // top-level/global variables
 };
 
@@ -140,7 +158,7 @@ public:
 
     void SetMainFilepath(const std::string& path) { m_mainFilepath = path; }
 
-    void GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR);
+    bool GenerateIR(std::shared_ptr<Node> rootNode, bool dumpIR);
     void EmitObjectFile(const std::string& filename);
     void LinkObjectFile(const std::string& filepath, const std::string& filename);
 
@@ -153,14 +171,17 @@ private:
     std::unique_ptr<llvm::TargetMachine> m_targetMachine;
     AbiClassifier m_abi;
 
+    std::optional<size_t> m_functionScopeBase; // only set while compiling a function body
     std::vector<std::unordered_map<std::string, VarInfo>> m_scopes;
     std::unordered_set<llvm::Value*> m_heapValues;
-    std::map<std::string, llvm::Function*> m_functions;
+    std::map<std::string, FunctionInfo> m_functions;
     std::vector<LoopContext> m_loopStack;
     std::map<std::string, std::unique_ptr<BuiltinFunction>> m_builtins;
     std::unordered_map<std::string, CompileTimeFunc> m_compileTimeBuiltins;
     std::unordered_map<std::string, llvm::Constant*> m_constants;
     std::unordered_map<std::string, ArrayInfo> m_arrays;
+    std::vector<PendingWriteBack> m_pendingWriteBacks;
+    llvm::Value* m_currentReturnLenOutSlot = nullptr;
     StructRegistry m_structs;
     llvm::Value* m_currentStructRetPtr = nullptr; // non-null while compiling a struct-returning function's body
     std::unordered_map<std::string, MethodFunc> m_memberMethods;
@@ -171,6 +192,7 @@ private:
     RuntimeFunctions m_runtime;
 
     bool m_bareMetal = false;
+    bool m_hadError = false;
 
 private:
     llvm::Value* CompileNode(std::shared_ptr<Node> node);
@@ -208,18 +230,23 @@ private:
     void RegisterMemberMethod(const std::string& typeName, const std::string& methodName, MethodFunc func);
     void RegisterCompileTimeBuiltin(const std::string& name, int arity, CompileTimeFunc func);
 
+    void FlushPendingWriteBacks();
+    void EmitReturnLenWriteBack(std::shared_ptr<Node> returnedNode);
+    llvm::Value* CopyToTemp(llvm::Type* ty, llvm::Value* srcPtr, const std::string& name);
+
     // flattens m_scopes into a single name→VarInfo map so we can snapshot all currently visible variables before compiling a module and diff afterwards
     std::unordered_map<std::string, VarInfo> CollectAllVariables() const;
     void FreeLocalHeapValues();
+    void FreeHeapValuesForReturn(const VarInfo* keep, llvm::Value* retVal);
 
     // recursively scans a function body for any "paramName::field" access or assignment. Returns the struct type name whose fields match, or "" if the parameter is not used as a struct inside this body.
     std::string ScanForStructParamUsage(const std::string& paramName, std::shared_ptr<Node> body);
     llvm::Type* GetLogicalFunctionReturnType(llvm::Function* func);
 
     using LocalTypeMap = std::unordered_map<std::string, llvm::Type*>;
-    llvm::Type* InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap& locals);
-    llvm::Type* InferenceReturnType(std::shared_ptr<Node> body, bool autoReturn);
-    llvm::Type* InferenceReturnTypeBlock(std::shared_ptr<Node> node, LocalTypeMap& locals);
+    llvm::Type* InferenceExprType(std::shared_ptr<Node> node, const LocalTypeMap& locals, const std::unordered_map<std::string, llvm::Type*>& paramArrayElemTypes);
+    llvm::Type* InferenceReturnType(std::shared_ptr<Node> body, bool autoReturn, const std::unordered_map<std::string, llvm::Type*>& paramArrayElemTypes);
+    llvm::Type* InferenceReturnTypeBlock(std::shared_ptr<Node> node, LocalTypeMap& locals, const std::unordered_map<std::string, llvm::Type*>& paramArrayElemTypes);
 
     llvm::Function* DeclareExternalFunction(const std::string& symbolName, llvm::Type* returnType, std::vector<llvm::Type*> paramTypes, bool isVarArg = false);
     void DeclareRuntimeFunctions();
@@ -233,16 +260,30 @@ private:
     llvm::AllocaInst* CreateEntryBlockAlloca(const std::string& name, llvm::Type* type);
     llvm::Value* IntToString(llvm::Value* val);
     llvm::Type* StringToLLVMType(const std::string& typeName);
+    llvm::Type* TryStringToLLVMType(const std::string &typeName);
     std::string LLVMTypeToString(llvm::Type *type);
+    bool IsNumericTypeName(const std::string &typeName);
+    bool ArgTypeCompatible(const std::string& declaredType, const std::string& actualType);
     llvm::Value* Compile_CharToHeapString(llvm::Value* charVal);
     llvm::Value* Compile_CharArrayFromString(VarAssignNode* node, const std::string& name, ArrayTypeInfo& info);
+    bool Compile_CallArguments(llvm::Function* func, const FunctionInfo& funcInfo, const std::string& displayName, CallNode* node, std::vector<llvm::Value*>& args);
     std::string GetExprLangType(const std::shared_ptr<Node>& node);
     std::optional<ArrayTypeInfo> ParseArrayTypeName(const std::string &typeName);
     llvm::Value* CreateFormatString(const std::string& fmt);
     llvm::Value* GetArrayElementPtr(llvm::AllocaInst* alloca, llvm::Type* elementType, int length, bool isDynamic, llvm::Value* indexVal, const std::string& name);
+    llvm::Value* OwnedReturnArray(std::shared_ptr<Node> returnedNode, llvm::Value* val);
     static bool NodeContainsCall(const std::shared_ptr<Node>& node);
     std::string ResolveStaticTypeName(const std::shared_ptr<Node> &node);
 
     void InitializeTargetInfo();
     std::string DetectLinker();
+
+    template <typename... Args>
+    void Error(fmt::format_string<Args...> format_str, Args&&... args)
+    {
+        m_hadError = true;
+        
+        fmt::print(stderr, fmt::fg(fmt::color::indian_red) | fmt::emphasis::bold, "Error: ");
+        fmt::print(stderr, format_str, std::forward<Args>(args)...);
+    }
 };
