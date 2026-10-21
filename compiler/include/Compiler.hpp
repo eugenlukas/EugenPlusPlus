@@ -283,7 +283,7 @@ private:
     {
         m_hadError = true;
         
-        fmt::print(stderr, fmt::fg(fmt::color::indian_red) | fmt::emphasis::bold, "Error: ");
+        fmt::print(stderr, fmt::fg(fmt::color::indian_red) | fmt::emphasis::bold, "Error(" + m_mainFilepath + "): ");
         fmt::print(stderr, format_str, std::forward<Args>(args)...);
     }
 };

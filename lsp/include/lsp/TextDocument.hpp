@@ -1,8 +1,10 @@
 #pragma once
 #include <string>
 #include <nlohmann/json.hpp>
+#include <vector>
 #include "Message.hpp"
 #include "../../../core/include/Error.hpp"
+#include "../../../core/include/Warning.hpp"
 
 #define TextDocumentIdentifierMacro \
     std::string uri;
@@ -147,22 +149,44 @@ TextDocumentPublishDiagnostics NewPublishDiagnosticsClearResponse(std::string ur
     return response;
 }
 
-TextDocumentPublishDiagnostics NewPublishDiagnosticsErrorResponse(std::string uri, Error* const & error, std::string errorSource)
+TextDocumentPublishDiagnostics NewPublishDiagnosticsResponse(std::string uri, Error* const & error, const std::vector<Warning>& warnings, std::string originSource)
 {
-    Range diagnosticRange;
-    diagnosticRange.start = {error->GetPosStart().GetLineNumber(), error->GetPosStart().GetColumn()};
-    diagnosticRange.end = {error->GetPosEnd().GetLineNumber(), error->GetPosEnd().GetColumn()};
-
-    Diagnostic diagnostic;
-    diagnostic.range = diagnosticRange;
-    diagnostic.severity = SEVERITY_ERROR;
-    diagnostic.code = error->GetErrorName();
-    diagnostic.source = errorSource;
-    diagnostic.message = error->GetErrorDetails();
-
     PublishDiagnosticsParams params;
     params.uri = uri;
-    params.diagnostics.push_back(diagnostic);
+
+    // Error
+    if (error != nullptr)
+    {
+        Range diagnosticErrorRange;
+        diagnosticErrorRange.start = {error->GetPosStart().GetLineNumber(), error->GetPosStart().GetColumn()};
+        diagnosticErrorRange.end = {error->GetPosEnd().GetLineNumber(), error->GetPosEnd().GetColumn()};
+        
+        Diagnostic diagnosticError;
+        diagnosticError.range = diagnosticErrorRange;
+        diagnosticError.severity = SEVERITY_ERROR;
+        diagnosticError.code = error->GetErrorName();
+        diagnosticError.source = originSource;
+        diagnosticError.message = error->GetErrorDetails();
+
+        params.diagnostics.push_back(std::move(diagnosticError));
+    }
+
+    // Warnings
+    for (const Warning& warning : warnings)
+    {
+        Range range;
+        range.start = {warning.posStart.GetLineNumber(), warning.posStart.GetColumn()};
+        range.end = {warning.posEnd.GetLineNumber(), warning.posEnd.GetColumn()};
+
+        Diagnostic diagnosticWarning;
+        diagnosticWarning.range = range;
+        diagnosticWarning.severity = SEVERITY_Warning;
+        diagnosticWarning.code = "Warning";
+        diagnosticWarning.source = originSource;
+        diagnosticWarning.message = warning.details;
+
+        params.diagnostics.push_back(std::move(diagnosticWarning));
+    }
 
     TextDocumentPublishDiagnostics response;
     response.jsonrpc = "2.0";

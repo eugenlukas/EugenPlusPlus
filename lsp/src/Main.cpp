@@ -61,7 +61,7 @@ void HandleMessage(std::string method, std::string contents, State* state)
         LOG("Opened: " + request.params.textDocument.uri);
         OpenDocument(state, request.params.textDocument.uri, request.params.textDocument.text);
 
-        AnalyseForErrors(state, request.params.textDocument.uri);
+        Analyse(state, request.params.textDocument.uri);
     }
     else if (method == "textDocument/didChange")
     {
@@ -101,7 +101,7 @@ void HandleMessage(std::string method, std::string contents, State* state)
 
         LOG("Saved: " + request.params.textDocument.uri);
         
-        AnalyseForErrors(state, request.params.textDocument.uri);
+        Analyse(state, request.params.textDocument.uri);
     }
 }
 

@@ -4,6 +4,7 @@
 #include "Token.hpp"
 #include "Nodes.hpp"
 #include "Error.hpp"
+#include "Warning.hpp"
 
 class ParseResult
 {
@@ -110,6 +111,9 @@ public:
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::string> ops, std::function<ParseResult()> func_b = nullptr);
 	ParseResult BinOp(std::function<ParseResult()> func_a, std::vector<std::pair<std::string, std::string>> typeValueOps, std::function<ParseResult()> func_b = nullptr);
 
+	void PrintWarnings();
+	const std::vector<Warning>& GetWarnings() const { return m_warnings; }
+
 private:
 	std::vector<Token> tokens;
 	std::vector<FuncAttribute> m_pendingAttributes;
@@ -117,6 +121,5 @@ private:
 	int tokIdx = -1;
 	Token currentToken;
 
-private:
-	void PrintWarning(std::string warning);
+	std::vector<Warning> m_warnings = {};
 };

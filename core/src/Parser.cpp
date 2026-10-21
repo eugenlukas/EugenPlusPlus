@@ -918,6 +918,9 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 		return res.Failure(std::make_unique<InvalidSyntaxError>(
 			currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected '" + caseKeyword + "'"));
 
+	Position caseKeywordPosStart = currentToken.GetPosStart();
+	Position caseKeywordPosEnd = currentToken.GetPosEnd();
+
 	Advance();
 	res.RegisterAdvancement();
 
@@ -947,7 +950,7 @@ ParseResult Parser::IfExprCases(std::string caseKeyword, CasesResult& outResult)
 		if (currentToken.GetType() == TT_RCURLYBRACKET)
 		{
 			hasBodyContent = false;
-			PrintWarning("Warning(l." + std::to_string(currentToken.GetPosStart().GetLineNumber()) + "): If statement has empty body\n");
+			m_warnings.push_back(Warning(caseKeywordPosStart, caseKeywordPosEnd, "If statement has empty body\n"));
 		}
 
 		if (hasBodyContent)
@@ -1134,6 +1137,8 @@ ParseResult Parser::FuncDef(bool anonymous)
 {
 	ParseResult res;
 	const int headerLine = currentToken.GetPosStart().GetLineNumber();
+	Position methodPosStart;
+	Position methodPosEnd;
 
 	std::optional<Token> varNameTok;
 
@@ -1154,6 +1159,9 @@ ParseResult Parser::FuncDef(bool anonymous)
 			return res.Failure(std::make_unique<InvalidSyntaxError>(currentToken.GetPosStart(), currentToken.GetPosEnd(), "Expected method name"));
 
 		varNameTok = currentToken;
+
+		methodPosStart = currentToken.GetPosStart();
+		methodPosEnd = currentToken.GetPosEnd();
 
 		Advance();
 		res.RegisterAdvancement();
@@ -1219,7 +1227,7 @@ ParseResult Parser::FuncDef(bool anonymous)
 	else
 	{
 		returnTypeName = "void";
-		PrintWarning("Warning(l." + std::to_string(headerLine) + "): method '" + methodName + "' has no return type and is treated as ': void'\n");
+		m_warnings.push_back(Warning(methodPosStart, methodPosEnd, "Mmethod '" + methodName + "' has no return type and is treated as ': void'\n"));
 	}
 
 	const bool isProcedure = (returnTypeName == "void");
@@ -1431,25 +1439,49 @@ ParseResult Parser::AttributeList()
         Advance();
         res.RegisterAdvancement();
 
-        std::optional<std::string> arg;
+        std::optional<std::vector<std::string>> args = std::nullopt;
         if (currentToken.GetType() == TT_LPAREN)
         {
+			std::vector<std::string> foundArgs;
+
             Advance();
             res.RegisterAdvancement();
 
-            if (currentToken.GetType() != TT_STRING)
-                return false;
-            arg = std::get<std::string>(currentToken.GetValue());
-            Advance();
-            res.RegisterAdvancement();
+			if (currentToken.GetType() != TT_RPAREN)
+			{
+				while (true)
+				{
+					if (currentToken.GetType() != TT_STRING)
+                		return false;
+
+					foundArgs.push_back(std::get<std::string>(currentToken.GetValue()));
+
+            		Advance();
+            		res.RegisterAdvancement();
+
+					// contiue when comma found for next arg
+					if (currentToken.GetType() == TT_COMMA)
+            		{
+            		    Advance();
+            		    res.RegisterAdvancement();
+            		    continue;
+            		}
+
+					// break when a comma isn't found anymore
+					break;
+				}
+			}
 
             if (currentToken.GetType() != TT_RPAREN)
                 return false;
+			
             Advance();
             res.RegisterAdvancement();
+
+			args = foundArgs;
         }
 
-        attrs.push_back({ attrName, arg });
+        attrs.push_back({ attrName, args });
         return true;
     };
 
@@ -1537,9 +1569,15 @@ ParseResult Parser::BinOp(std::function<ParseResult()> func_a, std::vector<std::
 	return res.Success(left);
 }
 
-void Parser::PrintWarning(std::string warning)
+void Parser::PrintWarnings()
 {
-	fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, warning);
+	for (Warning warning : m_warnings)
+	{
+		std::string warningNote = "File \"" + warning.posStart.GetFileName() + "\", line " + std::to_string(warning.posStart.GetLineNumber());
+		warningNote += "\nWarning: " + warning.details + "\n";
+
+    	fmt::print(stderr, fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, warningNote);
+	}
 }
 
 std::shared_ptr<Node> ParseResult::Register(const ParseResult& res)

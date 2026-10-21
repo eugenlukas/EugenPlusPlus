@@ -137,7 +137,7 @@ llvm::Value *Compiler::CompileNode(std::shared_ptr<Node> node)
         && !dynamic_cast<StructDefNode*>(node.get()) && !dynamic_cast<ModuleNode*>(node.get())
         && !dynamic_cast<LinkNode*>(node.get()) && !dynamic_cast<ExternNode*>(node.get()))
     {
-        Error("Top-level statement is not allowed outside a function: {}\nOnly 'func', 'struct', '#module', '#link' and '#extern' declarations can appear at top level\n", node->Repr());
+        Error("Top-level statement is not allowed outside a function, given node was a: {}\nOnly 'func', 'struct', '#module', '#link' and '#extern' declarations can appear at top level\n", node->Repr());
         return nullptr;
     }
 
@@ -1586,27 +1586,77 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
         argTypes.push_back(llvm::PointerType::get(builder.getInt32Ty(), 0));
 
     llvm::FunctionType* funcType = llvm::FunctionType::get(llvmReturnType, argTypes, false);
-    llvm::Function* func = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, name, module.get());
+
+    // Resolve attributes
+    bool isCDecl = false;
+    bool generateNoBody = false;
+    std::string llvmFunctionName = name;
+    for (const auto& attr : node->GetAttributes())
+    {
+        if (attr.name == "cdecl")
+        {
+            isCDecl = true;
+            if (attr.args.has_value())
+            {
+                if (attr.args.value().size() != 2)
+                {
+                    Error("cdecl requires 2 args: the C symbol name and a boolean indicating whether to omit the generated function body. Got {}\n", attr.args.value().size());
+                    return nullptr;
+                }
+
+                llvmFunctionName = attr.args.value()[0];
+                const std::string noBodyArg = attr.args.value()[1];
+                if (noBodyArg != "true" && noBodyArg != "1" && noBodyArg != "false" && noBodyArg != "0")
+                {
+                    Error("cdecl second argument must be a boolean ('true', 'false', '1' or '0')");
+                    return nullptr;
+                }
+                if (llvmFunctionName.empty())
+                {
+                    Error("func '{}': cdecl symbol name cannot be empty\n", name);
+                    return nullptr;
+                }
+
+                generateNoBody = noBodyArg == "true" || noBodyArg == "1";
+            }
+        }
+        else
+            fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, "Warning: unknow function attribute '" + attr.name + "'\n");
+    }
+
+    // Reuse an existing declaration/definition with the same symbol rather than letting LLVM silently uniquify the name. This also makes multiple
+    // language-level declarations of the same C symbol share one LLVM function
+    llvm::Function* func = module->getFunction(llvmFunctionName);
+    if (func)
+    {
+        if (func->getFunctionType() != funcType)
+        {
+            Error("func '{}': symbol '{}' was already declared with a different signature\n", name, llvmFunctionName);
+            return nullptr;
+        }
+
+        if (!generateNoBody && !func->isDeclaration())
+        {
+            Error("func '{}': symbol '{}' already has a function body\n", name, llvmFunctionName);
+            return nullptr;
+        }
+    }
+    else
+    {
+        func = llvm::Function::Create(funcType, llvm::GlobalValue::ExternalLinkage, llvmFunctionName, module.get());
+    }
+
+    if (isCDecl)
+    {
+        func->setCallingConv(llvm::CallingConv::C);
+        func->setLinkage(llvm::GlobalVariable::ExternalLinkage);
+    }
 
     // Handle bare-metal
     if (m_bareMetal)
     {
         func->addFnAttr(llvm::Attribute::NoImplicitFloat);
         func->addFnAttr(llvm::Attribute::NoRedZone);
-    }
-
-    // Handle function attributes
-    for (const auto& attr : node->GetAttributes())
-    {
-        if (attr.name == "cdecl")
-        {
-            func->setCallingConv(llvm::CallingConv::C);
-            func->setLinkage(llvm::GlobalValue::ExternalLinkage);
-            if (attr.arg.has_value())
-                func->setName(attr.arg.value());
-        }
-        else
-            fmt::print(fmt::fg(fmt::color::yellow) | fmt::emphasis::bold, "Warning: unknow function attribute '" + attr.name + "'\n");
     }
 
     if (structReturnStructTy)
@@ -1623,6 +1673,10 @@ llvm::Value *Compiler::Compile_FuncDefNode(FuncDefNode *node)
         paramByRef.push_back(argTok.byReference);
     }
     m_functions[name] = { func, std::move(defaults), std::move(paramTypeNames), std::move(paramByRef), returnArrayInfo };
+
+    // Extern-only cdecls are LLVM declarations. Do not create an entry block
+    if (generateNoBody)
+        return func;
 
     // Name arguments (the hidden structReturn pointer, if present, is always first and isn't in ArgNameToks)
     llvm::Value* structReturnPtr = nullptr;
@@ -2213,6 +2267,7 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
     // parse lexResult
     Parser parser(lexResult.tokens);
     auto parseResult = parser.Parse();
+    parser.PrintWarnings();
     if (parseResult.HasError())
     {
         Helper::PrintErrorString(parseResult.GetErrorPtr());
@@ -2245,6 +2300,12 @@ llvm::Value *Compiler::Compile_ModuleNode(ModuleNode *node)
         if (variablesBefore.find(name) == variablesBefore.end())
             m_modules[alias].variables[name] = info;
     }
+
+    m_mainFilepath = savedFilepath;
+
+    // info
+    fmt::print(fmt::fg(fmt::color::dark_green) | fmt::emphasis::bold, "Compiled ");
+    std::cout << filepath.filename() << "\n";
 
     return nullptr;
 }
@@ -2943,13 +3004,50 @@ llvm::Function *Compiler::DeclareExternalFunction(const std::string &symbolName,
 
 void Compiler::DeclareRuntimeFunctions()
 {
-    if (m_bareMetal)
-        return; // because of no libc
-
     llvm::Type* i8p    = builder.getInt8Ty()->getPointerTo();
     llvm::Type* i32    = builder.getInt32Ty();
     llvm::Type* i64    = builder.getInt64Ty();
     llvm::Type* voidTy = llvm::Type::getVoidTy(context);
+
+    if (m_bareMetal)
+    {
+        // create own strlen when no libc, because of frequent ussage in baremetal programs
+        auto* strlenTy = llvm::FunctionType::get(i64, { i8p }, false);
+        m_runtime.strlen = llvm::Function::Create(strlenTy, llvm::GlobalValue::InternalLinkage, "__epp_strlen",module.get());
+        m_runtime.strlen->addFnAttr(llvm::Attribute::NoImplicitFloat);
+        m_runtime.strlen->addFnAttr(llvm::Attribute::NoRedZone);
+
+        llvm::Argument* str = m_runtime.strlen->getArg(0);
+        str->setName("str");
+
+        llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", m_runtime.strlen);
+        llvm::BasicBlock* loopBB  = llvm::BasicBlock::Create(context, "loop", m_runtime.strlen);
+        llvm::BasicBlock* stepBB  = llvm::BasicBlock::Create(context, "step", m_runtime.strlen);
+        llvm::BasicBlock* doneBB  = llvm::BasicBlock::Create(context, "done", m_runtime.strlen);
+
+        llvm::IRBuilder<> strlenBuilder(context);
+        strlenBuilder.SetInsertPoint(entryBB);
+        llvm::AllocaInst* lenSlot = strlenBuilder.CreateAlloca(i64, nullptr, "len");
+        strlenBuilder.CreateStore(llvm::ConstantInt::get(i64, 0), lenSlot);
+        strlenBuilder.CreateBr(loopBB);
+
+        strlenBuilder.SetInsertPoint(loopBB);
+        llvm::Value* len = strlenBuilder.CreateLoad(i64, lenSlot, "index");
+        llvm::Value* charPtr = strlenBuilder.CreateGEP(builder.getInt8Ty(), str, len, "charPtr");
+        llvm::Value* ch = strlenBuilder.CreateLoad(builder.getInt8Ty(), charPtr, "ch");
+        llvm::Value* isNull = strlenBuilder.CreateICmpEQ(ch, llvm::ConstantInt::get(builder.getInt8Ty(), 0), "isNull");
+        strlenBuilder.CreateCondBr(isNull, doneBB, stepBB);
+
+        strlenBuilder.SetInsertPoint(stepBB);
+        llvm::Value* nextLen = strlenBuilder.CreateAdd(len, llvm::ConstantInt::get(i64, 1), "nextLen");
+        strlenBuilder.CreateStore(nextLen, lenSlot);
+        strlenBuilder.CreateBr(loopBB);
+
+        strlenBuilder.SetInsertPoint(doneBB);
+        strlenBuilder.CreateRet(len);
+
+        return; // return because of lack of libc
+    }
 
     m_runtime.exit = DeclareExternalFunction("exit", voidTy, { i32 });
     m_runtime.concat = DeclareExternalFunction("concat", i8p, { i8p, i8p });
@@ -3826,7 +3924,13 @@ void Compiler::InitializeTargetInfo()
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
 
-    std::string targetTriple = llvm::sys::getDefaultTargetTriple();
+    // Bare-metal builds default to 32-bit i386
+    std::string targetTriple;
+    if (m_bareMetal)
+        targetTriple = "i386-unknown-none";
+    else
+        targetTriple = llvm::sys::getDefaultTargetTriple();
+
     if (m_bareMetal)
     {
         llvm::Triple triple(targetTriple);

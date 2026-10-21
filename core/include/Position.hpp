@@ -10,11 +10,11 @@ public:
 	Position Advance(char current_char=NULL);
 	Position Copy();
 
-	int GetIdx() { return idx; }
-	std::string GetFileName() { return fn; }
-	int GetLineNumber() { return ln; }
-	std::string GetFileContent() { return ftxt; }
-	int GetColumn() { return col; }
+	int GetIdx() const { return idx; }
+	std::string GetFileName() const { return fn; }
+	int GetLineNumber() const { return ln; }
+	std::string GetFileContent() const { return ftxt; }
+	int GetColumn() const { return col; }
 
 private:
 	int idx;

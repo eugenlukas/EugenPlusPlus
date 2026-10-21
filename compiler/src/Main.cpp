@@ -63,6 +63,7 @@ int main(int argc, char** argv)
     // Generate AST
     Parser parser(tokenResult.tokens);
     ParseResult ast = parser.Parse();
+    parser.PrintWarnings();
     if (ast.HasError())
     {
         Helper::PrintErrorString(ast.GetErrorPtr());
@@ -88,6 +89,11 @@ int main(int argc, char** argv)
     {
         std::cerr << "Compilation aborted due to invalid generated IR.\n";
         return 1;
+    }
+    else
+    {
+        fmt::print(fmt::fg(fmt::color::dark_green) | fmt::emphasis::bold, "Compiled");
+        std::cout << " \"" << filepath.string() << "\"\n";
     }
     compiler.EmitObjectFile(absoluteFilepathNoEndfileExtension.string() + ".o");
     if(!bareMetal && !Helper::argv_has(argc, argv, "--o"))

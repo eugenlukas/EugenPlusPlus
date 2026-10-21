@@ -27,7 +27,7 @@ struct StructAttributeToken
 struct FuncAttribute
 {
 	std::string name;
-	std::optional<std::string> arg;
+	std::optional<std::vector<std::string>> args;
 };
 
 class Node
